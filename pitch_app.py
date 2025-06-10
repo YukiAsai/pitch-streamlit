@@ -25,21 +25,25 @@ with st.form("pitch_form"):
         score_bottom = st.number_input("得点（後攻）", min_value=0, step=1)
         inning = st.number_input("イニング", min_value=1, step=1)
         top_bottom = st.selectbox("表裏", ["表", "裏"])
+        ball_count = st.selectbox("ボールカウント", ["0", "1", "2","3"])
+        strike_count = st.selectbox("ストライクカウント", ["0", "1", "2"])
         out_count = st.selectbox("アウトカウント", ["0", "1", "2"])
-
-    with col2:
-        runner_1b = st.text_input("一塁ランナー（名前 or 無し）")
-        runner_2b = st.text_input("二塁ランナー（名前 or 無し）")
-        runner_3b = st.text_input("三塁ランナー（名前 or 無し）")
-        batter = st.text_input("打者")
-        batter_side = st.selectbox("打者左右", ["右", "左", "両"])
-        pitcher = st.text_input("投手")
-        pitcher_side = st.selectbox("投手左右", ["右", "左"])
         pitch_type = st.selectbox("球種", ["ストレート", "カーブ", "スライダー", "チェンジアップ"])
         pitch_course = st.text_input("コース（例：内角高め）")
         result = st.text_input("結果（例：空振り、右飛など）")
         strategy_flag = st.selectbox("作戦有無", ["なし", "バント", "エンドラン", "スクイズ"])
 
+    with col2:
+        update_batter_info = st.checkbox("次の打席に移る")
+        if update_batter_info:
+            batter = st.text_input("打者名")
+            batter_side = st.selectbox("打者の利き腕", ["右", "左", "両"])
+            pitcher = st.text_input("投手名")
+            pitcher_side = st.selectbox("投手の利き腕", ["右", "左"])
+            runner_1b = st.text_input("一塁ランナー")
+            runner_2b = st.text_input("二塁ランナー")
+            runner_3b = st.text_input("三塁ランナー")
+            
     submitted = st.form_submit_button("保存する")
 
     if submitted:
