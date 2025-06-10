@@ -12,7 +12,7 @@ spreadsheet_id = "1ICapYh3ZTOfRMOg2Jj0DS5pn4R8aXvsxN42eMrOi-zQ"
 sheet = client.open_by_key(spreadsheet_id).worksheet("input")
 
 # タイトル
-st.title("⚾ 一球データ入力アプリ（Google Sheets連携版）")
+st.title("⚾ 一球データ入力アプリ（Google Sheets連携版）ver1")
 
 # 入力フォーム
 with st.form("pitch_form"):
@@ -43,7 +43,7 @@ with st.form("pitch_form"):
             runner_1b = st.text_input("一塁ランナー")
             runner_2b = st.text_input("二塁ランナー")
             runner_3b = st.text_input("三塁ランナー")
-            
+
     submitted = st.form_submit_button("保存する")
 
     if submitted:
