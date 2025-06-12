@@ -1,7 +1,7 @@
 import streamlit as st
 from datetime import datetime
 
-st.set_page_config(page_title="一球データ入力アプリ", layout="wide")
+st.set_page_config(page_title="一球データ入力アプリver2", layout="wide")
 
 # ■■ セッション情報初期化 ■■
 if "game_info" not in st.session_state:
