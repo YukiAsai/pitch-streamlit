@@ -35,6 +35,16 @@ with st.form("pitch_form"):
 
     with col2:
         update_batter_info = st.checkbox("次の打席に移る")
+
+        # ✅ 事前に空で初期化（これがポイント！）
+        batter = ""
+        batter_side = ""
+        pitcher = ""
+        pitcher_side = ""
+        runner_1b = ""
+        runner_2b = ""
+        runner_3b = ""
+
         if update_batter_info:
             batter = st.text_input("打者名")
             batter_side = st.selectbox("打者の利き腕", ["右", "左", "両"])
@@ -43,7 +53,7 @@ with st.form("pitch_form"):
             runner_1b = st.text_input("一塁ランナー")
             runner_2b = st.text_input("二塁ランナー")
             runner_3b = st.text_input("三塁ランナー")
-
+            
     submitted = st.form_submit_button("保存する")
 
     if submitted:
