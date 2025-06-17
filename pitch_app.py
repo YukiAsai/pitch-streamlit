@@ -1,7 +1,10 @@
 import streamlit as st
 from datetime import datetime
+from PIL import Image, ImageDraw
+from streamlit_image_coordinates import streamlit_image_coordinates
+import os
 
-st.set_page_config(page_title="一球データ入力アプリver2", layout="wide")
+st.set_page_config(page_title="一球データ入力アプリ", layout="wide")
 
 # ■■ セッション情報初期化 ■■
 if "game_info" not in st.session_state:
@@ -12,12 +15,14 @@ if "atbat_info" not in st.session_state:
     st.session_state.atbat_info = {}
 if "pitches" not in st.session_state:
     st.session_state.pitches = []
+if "last_coords" not in st.session_state:
+    st.session_state.last_coords = None
 
 # □ 試合リセットボタン
 st.sidebar.header("リセット操作")
 if st.sidebar.button("🔄 全てのデータをリセット"):
     st.session_state.clear()
-    st.experimental_rerun()
+    st.rerun()
 
 # □ 1. 試合情報入力
 st.header("1. 試合情報 (最初の1回のみ入力)")
@@ -84,27 +89,101 @@ if st.session_state.atbat_info:
 
 # □ 4. 一球情報入力
 st.header("4. 一球情報入力")
-with st.form("pitch_form"):
-    pitch_type = st.selectbox("球種", ["ストレート", "カーブ", "スライダー", "チェンジアップ", "フォーク", "その他"])
-    pitch_result = st.selectbox("結果", ["ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル", "インプレー", "牽制", "死球", "その他"])
-    pitch_course = st.text_input("コース（例：外角低め）")
-    strategy = st.selectbox("作戦", ["なし", "バント", "エンドラン", "スクイズ"])
-    submit_pitch = st.form_submit_button("この一球を記録")
-    if submit_pitch:
-        pitch_record = {
-            "inning": st.session_state.inning_info.get("inning", ""),
-            "top_bottom": st.session_state.inning_info.get("top_bottom", ""),
-            "batter": st.session_state.atbat_info.get("batter", ""),
-            "pitcher": st.session_state.atbat_info.get("pitcher", ""),
-            "pitch_type": pitch_type,
-            "pitch_result": pitch_result,
-            "pitch_course": pitch_course,
-            "strategy": strategy
-        }
-        st.session_state.pitches.append(pitch_record)
-        st.success("一球の情報を保存しました")
+
+# 打席情報から打者の利き腕を取得
+batter_side = st.session_state.atbat_info.get("batter_side", "右") if st.session_state.atbat_info else "右"
+strike_zone_img = "strike_zone_right.png" if batter_side == "右" else "strike_zone_left.png"
+
+# 画像の存在チェック
+if not os.path.exists(strike_zone_img):
+    st.error(f"❌ {strike_zone_img} が見つかりません。ファイル名・場所を確認してください。")
+    st.stop()
+
+# ストライクゾーン画像クリックで投球コース
+base_img = Image.open(strike_zone_img).convert("RGBA")
+img = base_img.copy()
+
+if st.session_state.last_coords:
+    draw = ImageDraw.Draw(img)
+    x = st.session_state.last_coords["x"]
+    y = st.session_state.last_coords["y"]
+    radius = 5
+    draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="red")
+
+st.markdown("### ストライクゾーンをクリック👇")
+coords = streamlit_image_coordinates(img, key="strike_zone_coords")
+if coords:
+    st.session_state.last_coords = coords
+
+if st.session_state.last_coords:
+    pitch_course = f"X:{st.session_state.last_coords['x']}, Y:{st.session_state.last_coords['y']}"
+else:
+    pitch_course = "未選択"
+
+# 一球の共通入力（フォーム外。pitch_resultはここで選ぶ）
+
+strategy = st.selectbox("作戦", ["なし", "バント", "エンドラン", "スクイズ"])
+pitch_type = st.selectbox("球種", ["ストレート", "カーブ", "スライダー", "チェンジアップ", "フォーク", "その他"])
+pitch_result = st.selectbox("結果", ["ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル", "インプレー", "牽制", "死球", "その他"], key="pitch_result_selectbox")
+
+# ↓インプレーのときだけフォーム外で詳細を即時入力
+if pitch_result == "インプレー":
+    st.markdown("**【インプレー詳細入力】**")
+    batted_type = st.selectbox("打球の種類", ["フライ", "ゴロ", "ライナー"], key="batted_type_select")
+    batted_position = st.selectbox("打球方向", ["投手方向", "一塁方向", "二塁方向", "三塁方向", "遊撃方向", "左翼", "中堅", "右翼"], key="batted_pos_select")
+    batted_outcome = st.selectbox("結果", ["ヒット", "アウト", "エラー", "併殺", "犠打", "犠飛"], key="batted_out_select")
+
+else:
+    batted_type = ""
+    batted_position = ""
+    batted_outcome = ""
+
+
+# 記録ボタン
+if st.button("この一球を記録"):
+    pitch_record = {
+        "inning": st.session_state.inning_info.get("inning", ""),
+        "top_bottom": st.session_state.inning_info.get("top_bottom", ""),
+        "batter": st.session_state.atbat_info.get("batter", ""),
+        "pitcher": st.session_state.atbat_info.get("pitcher", ""),
+        "pitch_type": pitch_type,
+        "pitch_result": pitch_result,
+        "pitch_course": pitch_course,
+        "strategy": strategy,
+        "batted_type": batted_type,
+        "batted_position": batted_position,
+        "batted_outcome": batted_outcome,
+    }
+    st.session_state.pitches.append(pitch_record)
+    st.success("一球の情報を保存しました")
 
 # □ 最新の入力履歴表示
 if st.session_state.pitches:
     st.subheader("📊 最近の投球記録（直近5件）")
-    st.table(st.session_state.pitches[-5:])
+    st.dataframe(st.session_state.pitches[-5:])
+
+import gspread
+import pandas as pd
+import streamlit as st
+from google.oauth2.service_account import Credentials
+
+# スプレッドシートへの保存
+def save_to_google_sheets(data):
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=scope
+    )
+    client = gspread.authorize(creds)
+    sheet = client.open("Pitch_Data_2025").sheet1
+
+    df = pd.DataFrame(data)
+    sheet.clear()
+    sheet.update([df.columns.values.tolist()] + df.values.tolist())
+
+# Streamlit内で呼び出す
+if st.button("Google Sheets に保存"):
+    save_to_google_sheets(st.session_state.pitches)
+    st.success("✅ Google Sheets に保存しました")
