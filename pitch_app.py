@@ -45,7 +45,6 @@ if st.sidebar.button("🔄 全てのデータをリセット"):
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("⚾ 試合情報")
     if not st.session_state.game_info:
         with st.form("game_form"):
             game_date = st.date_input("試合日", value=datetime.today())
@@ -65,19 +64,31 @@ with col1:
 
 # □ 2. イニング情報
 with col2:
-    st.subheader("📘 イニング情報")
-    with st.form("inning_form"):
-        inning = st.number_input("現在のイニング", min_value=1, step=1)
-        top_bottom = st.radio("表裏", ["表", "裏"], horizontal=True)
-        submitted = st.form_submit_button("イニング情報を保存")
-        if submitted:
-            st.session_state.inning_info = {
-                "inning": inning,
-                "top_bottom": top_bottom
-            }
-            st.success("イニング情報を保存しました")
+    if not st.session_state.game_info:
+        with st.expander("イニング情報"): 
+            with st.form("inning_form"):
+                inning = st.number_input("現在のイニング", min_value=1, step=1)
+                top_bottom = st.radio("表裏", ["表", "裏"], horizontal=True)
+                submitted = st.form_submit_button("イニング情報を保存")
+                if submitted:
+                    st.session_state.inning_info = {
+                        "inning": inning,
+                        "top_bottom": top_bottom
+                    }
+                    st.success("イニング情報を保存しました")
 
     if st.session_state.inning_info:
+        with st.expander("イニング情報", expanded=False): 
+            with st.form("inning_form"):
+                inning = st.number_input("現在のイニング", min_value=1, step=1)
+                top_bottom = st.radio("表裏", ["表", "裏"], horizontal=True)
+                submitted = st.form_submit_button("イニング情報を保存")
+                if submitted:
+                    st.session_state.inning_info = {
+                        "inning": inning,
+                        "top_bottom": top_bottom
+                    }
+                    st.success("イニング情報を保存しました")
         inn = st.session_state.inning_info
         st.info(f"現在: {inn['inning']} 回{inn['top_bottom']}")
 
