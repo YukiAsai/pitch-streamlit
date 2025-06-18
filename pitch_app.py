@@ -4,6 +4,22 @@ from PIL import Image, ImageDraw
 from streamlit_image_coordinates import streamlit_image_coordinates
 import os
 
+# スプレッドシートへの保存
+def save_to_google_sheets(data):
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=scope
+    )
+    client = gspread.authorize(creds)
+    sheet = client.open("Pitch_Data_2025").sheet1
+
+    df = pd.DataFrame(data)
+    sheet.clear()
+    sheet.update([df.columns.values.tolist()] + df.values.tolist())
+
 st.set_page_config(page_title="一球データ入力アプリ", layout="wide")
 
 # ■■ セッション情報初期化 ■■
@@ -25,40 +41,45 @@ if st.sidebar.button("🔄 全てのデータをリセット"):
     st.rerun()
 
 # □ 1. 試合情報入力
-st.header("1. 試合情報 (最初の1回のみ入力)")
-if not st.session_state.game_info:
-    with st.form("game_form"):
-        game_date = st.date_input("試合日", value=datetime.today())
-        top_team = st.text_input("先攻チーム名")
-        bottom_team = st.text_input("後攻チーム名")
-        submitted = st.form_submit_button("試合情報を確定")
-        if submitted:
-            st.session_state.game_info = {
-                "date": game_date.strftime("%Y-%m-%d"),
-                "top_team": top_team,
-                "bottom_team": bottom_team
-            }
-            st.success("試合情報を保存しました")
-else:
-    game = st.session_state.game_info
-    st.info(f"試合日: {game['date']} | 先攻: {game['top_team']} | 後攻: {game['bottom_team']}")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("⚾ 試合情報")
+    if not st.session_state.game_info:
+        with st.form("game_form"):
+            game_date = st.date_input("試合日", value=datetime.today())
+            top_team = st.text_input("先攻チーム名")
+            bottom_team = st.text_input("後攻チーム名")
+            submitted = st.form_submit_button("試合情報を確定")
+            if submitted:
+                st.session_state.game_info = {
+                    "date": game_date.strftime("%Y-%m-%d"),
+                    "top_team": top_team,
+                    "bottom_team": bottom_team
+                }
+                st.success("試合情報を保存しました")
+    else:
+        game = st.session_state.game_info
+        st.info(f"試合日: {game['date']} | 先攻: {game['top_team']} | 後攻: {game['bottom_team']}")
 
 # □ 2. イニング情報
-st.header("2. イニング情報 (表/裏 の切替)")
-with st.form("inning_form"):
-    inning = st.number_input("現在のイニング", min_value=1, step=1)
-    top_bottom = st.radio("表裏", ["表", "裏"], horizontal=True)
-    submitted = st.form_submit_button("イニング情報を保存")
-    if submitted:
-        st.session_state.inning_info = {
-            "inning": inning,
-            "top_bottom": top_bottom
-        }
-        st.success("イニング情報を保存しました")
+with col2:
+    st.subheader("📘 イニング情報")
+    with st.form("inning_form"):
+        inning = st.number_input("現在のイニング", min_value=1, step=1)
+        top_bottom = st.radio("表裏", ["表", "裏"], horizontal=True)
+        submitted = st.form_submit_button("イニング情報を保存")
+        if submitted:
+            st.session_state.inning_info = {
+                "inning": inning,
+                "top_bottom": top_bottom
+            }
+            st.success("イニング情報を保存しました")
 
-if st.session_state.inning_info:
-    inn = st.session_state.inning_info
-    st.info(f"現在: {inn['inning']} 回{inn['top_bottom']}")
+    if st.session_state.inning_info:
+        inn = st.session_state.inning_info
+        st.info(f"現在: {inn['inning']} 回{inn['top_bottom']}")
 
 # □ 3. 打席情報
 st.header("3. 打席情報 (打者・投手・ランナー)")
@@ -155,6 +176,7 @@ if st.button("この一球を記録"):
         "batted_outcome": batted_outcome,
     }
     st.session_state.pitches.append(pitch_record)
+    save_to_google_sheets(st.session_state.pitches)
     st.success("一球の情報を保存しました")
 
 # □ 最新の入力履歴表示
@@ -166,24 +188,3 @@ import gspread
 import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
-
-# スプレッドシートへの保存
-def save_to_google_sheets(data):
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=scope
-    )
-    client = gspread.authorize(creds)
-    sheet = client.open("Pitch_Data_2025").sheet1
-
-    df = pd.DataFrame(data)
-    sheet.clear()
-    sheet.update([df.columns.values.tolist()] + df.values.tolist())
-
-# Streamlit内で呼び出す
-if st.button("Google Sheets に保存"):
-    save_to_google_sheets(st.session_state.pitches)
-    st.success("✅ Google Sheets に保存しました")
