@@ -46,21 +46,21 @@ col1, col2 = st.columns(2)
 
 with col1:
     with st.expander("試合情報", expanded=False): 
-        if not st.session_state.game_info:
-            with st.form("game_form"):
-                game_date = st.date_input("試合日", value=datetime.today())
-                top_team = st.text_input("先攻チーム名")
-                bottom_team = st.text_input("後攻チーム名")
-                submitted = st.form_submit_button("試合情報を確定")
-                if submitted:
-                    st.session_state.game_info = {
-                        "date": game_date.strftime("%Y-%m-%d"),
-                        "top_team": top_team,
-                        "bottom_team": bottom_team
-                    }
-                    st.success("試合情報を保存しました")
-        game = st.session_state.game_info
-        st.info(f"試合日: {game['date']} | 先攻: {game['top_team']} | 後攻: {game['bottom_team']}")
+        with st.form("game_form"):
+            game_date = st.date_input("試合日", value=datetime.today())
+            top_team = st.text_input("先攻チーム名")
+            bottom_team = st.text_input("後攻チーム名")
+            submitted = st.form_submit_button("試合情報を確定")
+            if submitted:
+                st.session_state.game_info = {
+                    "date": game_date.strftime("%Y-%m-%d"),
+                    "top_team": top_team,
+                    "bottom_team": bottom_team
+                }
+                st.success("試合情報を保存しました")
+        if st.session_state.inning_info:
+            game = st.session_state.game_info
+            st.info(f"試合日: {game['date']} | 先攻: {game['top_team']} | 後攻: {game['bottom_team']}")
 
 # □ 2. イニング情報
 with col2:
