@@ -59,9 +59,8 @@ with col1:
                         "bottom_team": bottom_team
                     }
                     st.success("試合情報を保存しました")
-        else:
-            game = st.session_state.game_info
-            st.info(f"試合日: {game['date']} | 先攻: {game['top_team']} | 後攻: {game['bottom_team']}")
+        game = st.session_state.game_info
+        st.info(f"試合日: {game['date']} | 先攻: {game['top_team']} | 後攻: {game['bottom_team']}")
 
 # □ 2. イニング情報
 with col2:
