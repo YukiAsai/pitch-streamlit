@@ -184,13 +184,32 @@ else:
     batted_outcome = ""
 
 
-# 記録ボタン
+# □ 記録ボタン（すべての情報を記録）
 if st.button("この一球を記録"):
+    game_info = st.session_state.game_info
+    inning_info = st.session_state.inning_info
+    atbat_info = st.session_state.atbat_info
+
     pitch_record = {
-        "inning": st.session_state.inning_info.get("inning", ""),
-        "top_bottom": st.session_state.inning_info.get("top_bottom", ""),
-        "batter": st.session_state.atbat_info.get("batter", ""),
-        "pitcher": st.session_state.atbat_info.get("pitcher", ""),
+        # 試合情報
+        "date": game_info.get("date", ""),
+        "top_team": game_info.get("top_team", ""),
+        "bottom_team": game_info.get("bottom_team", ""),
+
+        # イニング情報
+        "inning": inning_info.get("inning", ""),
+        "top_bottom": inning_info.get("top_bottom", ""),
+
+        # 打席情報
+        "batter": atbat_info.get("batter", ""),
+        "batter_side": atbat_info.get("batter_side", ""),
+        "pitcher": atbat_info.get("pitcher", ""),
+        "pitcher_side": atbat_info.get("pitcher_side", ""),
+        "runner_1b": atbat_info.get("runner_1b", ""),
+        "runner_2b": atbat_info.get("runner_2b", ""),
+        "runner_3b": atbat_info.get("runner_3b", ""),
+
+        # 一球情報
         "pitch_type": pitch_type,
         "pitch_result": pitch_result,
         "pitch_course": pitch_course,
@@ -199,6 +218,7 @@ if st.button("この一球を記録"):
         "batted_position": batted_position,
         "batted_outcome": batted_outcome,
     }
+
     st.session_state.pitches.append(pitch_record)
     save_to_google_sheets(st.session_state.pitches)
     st.success("一球の情報を保存しました")
