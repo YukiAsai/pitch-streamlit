@@ -4,8 +4,17 @@ from PIL import Image, ImageDraw
 from streamlit_image_coordinates import streamlit_image_coordinates
 import os
 
+import gspread
+import pandas as pd
+import streamlit as st
+from google.oauth2.service_account import Credentials
+
 # スプレッドシートへの保存
 def save_to_google_sheets(data):
+    import gspread
+    import pandas as pd
+    from google.oauth2.service_account import Credentials
+
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
@@ -14,11 +23,27 @@ def save_to_google_sheets(data):
         st.secrets["gcp_service_account"], scopes=scope
     )
     client = gspread.authorize(creds)
-    sheet = client.open("Pitch_Data_2025").sheet1
 
-    df = pd.DataFrame(data)
-    sheet.clear()
-    sheet.update([df.columns.values.tolist()] + df.values.tolist())
+    # スプレッドシート名（固定）
+    spreadsheet = client.open("Pitch_Data_2025")
+
+    for record in data[-1:]:  # 最新1件だけ書き込む（append方式）
+        # ▼ シート名の作成
+        date = record.get("date", "unknown")
+        top_team = record.get("top_team", "NoTeam")
+        inning = record.get("inning", "X")
+        top_bottom = record.get("top_bottom", "表")
+        sheet_name = f"{date}_{top_team}_{inning}{top_bottom}"
+
+        # ▼ シートが存在しなければ作成
+        try:
+            worksheet = spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
+            worksheet.append_row(list(record.keys()))  # ヘッダー追加
+
+        # ▼ データを1行追加
+        worksheet.append_row(list(record.values()))
 
 st.set_page_config(page_title="一球データ入力アプリ", layout="wide")
 
@@ -58,7 +83,7 @@ with col1:
                     "bottom_team": bottom_team
                 }
                 st.success("試合情報を保存しました")
-    if st.session_state.inning_info:
+    if st.session_state.game_info:
         game = st.session_state.game_info
         st.info(f"試合日: {game['date']} | 先攻: {game['top_team']} | 後攻: {game['bottom_team']}")
 
@@ -82,7 +107,7 @@ with col2:
 
 # □ 3. 打席情報
 st.header("3. 打席情報 (打者・投手・ランナー)")
-with st.form("atbat_form"):
+with st.form("at_bat_form"):
     batter = st.text_input("打者名")
     batter_side = st.selectbox("打者の利き腕", ["右", "左", "両"])
     pitcher = st.text_input("投手名")
@@ -183,7 +208,3 @@ if st.session_state.pitches:
     st.subheader("📊 最近の投球記録（直近5件）")
     st.dataframe(st.session_state.pitches[-5:])
 
-import gspread
-import pandas as pd
-import streamlit as st
-from google.oauth2.service_account import Credentials
