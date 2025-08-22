@@ -177,6 +177,11 @@ else:
 strategy = st.selectbox("作戦", ["なし", "バント", "エンドラン", "スクイズ"])
 pitch_type = st.selectbox("球種", ["ストレート", "カーブ", "スライダー", "チェンジアップ", "フォーク", "その他"])
 pitch_result = st.selectbox("結果", ["ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル",  "牽制", "打席終了"], key="pitch_result_selectbox")
+if strategy != "なし":
+    st.markdown("**【作戦成否】**")
+    strategy_result = st.selectbox(" 作戦結果",["成", "否"] ,key="stategy_result_select")
+else:
+    atbat_result = ""
 
 # ↓打席終了のときフォーム外で詳細を即時入力
 if pitch_result == "打席終了":
