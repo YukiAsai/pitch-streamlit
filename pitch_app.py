@@ -182,6 +182,8 @@ pitch_result = st.selectbox("結果", ["ストライク（見逃し）", "スト
 if pitch_result == "打席終了":
     st.markdown("**【打席結果入力】**")
     atbat_result = st.selectbox("打席結果",["三振(見)", "三振(空)","四球","死球","インプレー"] ,key="batted_type_select")
+else:
+    atbat_result = ""
 
 
 # ↓インプレーのときだけフォーム外で詳細を即時入力
