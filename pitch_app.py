@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
 
-# スプレッドシートへの保存
+#スプレッドシートへの保存
 def save_to_google_sheets(data):
     import gspread
     import pandas as pd
@@ -24,26 +24,33 @@ def save_to_google_sheets(data):
     )
     client = gspread.authorize(creds)
 
-    # スプレッドシート名（固定）
+    # スプレッドシート本体を開く
     spreadsheet = client.open("Pitch_Data_2025")
 
-    for record in data[-1:]:  # 最新1件だけ書き込む（append方式）
-        # ▼ シート名の作成
-        date = record.get("date", "unknown")
-        top_team = record.get("top_team", "NoTeam")
-        inning = record.get("inning", "X")
-        top_bottom = record.get("top_bottom", "表")
-        sheet_name = f"{date}_{top_team}_{inning}{top_bottom}"
+    # 最新の一球だけを保存
+    latest = data[-1]
+    date = latest.get("date", "unknown")
+    top_team = latest.get("top_team", "TopTeam")
+    bottom_team = latest.get("bottom_team", "BottomTeam")
+    top_bottom = latest.get("top_bottom", "表")
 
-        # ▼ シートが存在しなければ作成
-        try:
-            worksheet = spreadsheet.worksheet(sheet_name)
-        except gspread.exceptions.WorksheetNotFound:
-            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
-            worksheet.append_row(list(record.keys()))  # ヘッダー追加
+    # 攻撃側のチーム名（＝打者チーム）を使ってシート名を決定
+    batter_team = top_team if top_bottom == "表" else bottom_team
+    sheet_name = f"{date}_{batter_team}"
 
-        # ▼ データを1行追加
-        worksheet.append_row(list(record.values()))
+    # シート取得または作成
+    try:
+        worksheet = spreadsheet.worksheet(sheet_name)
+        existing_data = worksheet.get_all_values()
+        has_header = len(existing_data) > 0
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=30)
+        has_header = False
+
+    if not has_header:
+        worksheet.append_row(list(latest.keys()))  # ヘッダー行追加
+
+    worksheet.append_row(list(latest.values()))  # データ行追加
 
 st.set_page_config(page_title="一球データ入力アプリ", layout="wide")
 
@@ -169,14 +176,20 @@ else:
 
 strategy = st.selectbox("作戦", ["なし", "バント", "エンドラン", "スクイズ"])
 pitch_type = st.selectbox("球種", ["ストレート", "カーブ", "スライダー", "チェンジアップ", "フォーク", "その他"])
-pitch_result = st.selectbox("結果", ["ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル", "インプレー", "牽制", "死球", "その他"], key="pitch_result_selectbox")
+pitch_result = st.selectbox("結果", ["ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル",  "牽制", "打席終了"], key="pitch_result_selectbox")
+
+# ↓打席終了のときフォーム外で詳細を即時入力
+if pitch_result == "打席終了":
+    st.markdown("**【打席結果入力】**")
+    atbat_result = st.selectbox("打席結果",["三振(見)", "三振(空)","四球","死球","インプレー"] ,key="batted_type_select")
+
 
 # ↓インプレーのときだけフォーム外で詳細を即時入力
-if pitch_result == "インプレー":
+if atbat_result == "インプレー":
     st.markdown("**【インプレー詳細入力】**")
     batted_type = st.selectbox("打球の種類", ["フライ", "ゴロ", "ライナー"], key="batted_type_select")
-    batted_position = st.selectbox("打球方向", ["投手方向", "一塁方向", "二塁方向", "三塁方向", "遊撃方向", "左翼", "中堅", "右翼"], key="batted_pos_select")
-    batted_outcome = st.selectbox("結果", ["ヒット", "アウト", "エラー", "併殺", "犠打", "犠飛"], key="batted_out_select")
+    batted_position = st.selectbox("打球方向", ["投手", "一塁", "二塁", "三塁", "遊撃", "左翼", "中堅", "右翼","左中","右中"], key="batted_pos_select")
+    batted_outcome = st.selectbox("結果", ["ヒット","２塁打","3塁打","ホームラン", "アウト", "エラー", "併殺", "犠打", "犠飛"], key="batted_out_select")
 
 else:
     batted_type = ""
