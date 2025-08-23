@@ -26,6 +26,33 @@ def get_base_image(side: str) -> Image.Image:
     img = Image.open(BytesIO(data)).convert("RGBA")
     return img
 
+
+TARGET_WIDTH = 300  # 軽量化用
+
+@st.cache_resource(show_spinner=False)
+def get_base_image(side: str) -> Image.Image:
+    """利き腕ごとのベース画像を一度だけ読み込んで固定幅に縮小"""
+    path = "strike_zone_right.png" if side == "右" else "strike_zone_left.png"
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    if w != TARGET_WIDTH:
+        new_h = int(h * TARGET_WIDTH / w)
+        img = img.resize((TARGET_WIDTH, new_h), Image.LANCZOS)
+    return img
+
+#ストライクゾーン描画の関数
+def compose_marked_image_jpeg(base: Image.Image, coords: dict | None) -> bytes:
+    """ベース画像に点を描いて JPEG bytes を返す"""
+    canvas = base.copy()
+    if coords:
+        draw = ImageDraw.Draw(canvas)
+        x, y = coords["x"], coords["y"]
+        r = 3
+        draw.ellipse((x - r, y - r, x + r, y + r), fill=(255, 0, 0))
+    buf = BytesIO()
+    canvas.save(buf, format="JPEG", quality=65, optimize=True)
+    return buf.getvalue()
+
 #スプレッドシートへの保存
 def save_to_google_sheets(data):
     import gspread
@@ -279,19 +306,6 @@ else:
         st.stop()
 
     base_img = get_base_image(batter_side)  # ← キャッシュ済みPIL Image
-
-    # 直近の座標で作った「マーク付き画像」をセッションに保持し、座標が変わった時だけ再生成
-    def compose_marked_image(base: Image.Image, coords: dict | None) -> bytes:
-        """ベース画像に赤点を描いてPNG bytesを返す。coords=Noneならベースだけ。"""
-        canvas = base.copy()
-        if coords:
-            draw = ImageDraw.Draw(canvas)
-            x, y = coords["x"], coords["y"]
-            r = 5
-            draw.ellipse((x - r, y - r, x + r, y + r), fill="red")
-        buf = BytesIO()
-        canvas.save(buf, format="PNG")
-        return buf.getvalue()
 
     # 初期化
     if "marked_img_bytes" not in st.session_state:
