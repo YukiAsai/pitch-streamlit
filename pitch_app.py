@@ -10,6 +10,22 @@ import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
 
+from io import BytesIO
+
+@st.cache_data(show_spinner=False)
+def load_strike_zone_bytes(path: str) -> bytes:
+    # 画像バイトをキャッシュ（PILのオブジェクトではなく bytes を返すのが安定）
+    with open(path, "rb") as f:
+        return f.read()
+
+@st.cache_data(show_spinner=False)
+def get_base_image(side: str) -> Image.Image:
+    """利き腕ごとのベース画像(PIL Image)をキャッシュして返す"""
+    path = "strike_zone_right.png" if side == "右" else "strike_zone_left.png"
+    data = load_strike_zone_bytes(path)
+    img = Image.open(BytesIO(data)).convert("RGBA")
+    return img
+
 #スプレッドシートへの保存
 def save_to_google_sheets(data):
     import gspread
@@ -231,29 +247,48 @@ st.header("4. 一球情報入力")
 
 # 打席情報から打者の利き腕を取得
 batter_side = st.session_state.atbat_info.get("batter_side", "右") if st.session_state.atbat_info else "右"
+# 打者の利き腕からベース画像を取得（キャッシュ利用）
 strike_zone_img = "strike_zone_right.png" if batter_side == "右" else "strike_zone_left.png"
-
-# 画像の存在チェック
 if not os.path.exists(strike_zone_img):
     st.error(f"❌ {strike_zone_img} が見つかりません。ファイル名・場所を確認してください。")
     st.stop()
 
-# ストライクゾーン画像クリックで投球コース
-base_img = Image.open(strike_zone_img).convert("RGBA")
-img = base_img.copy()
+base_img = get_base_image(batter_side)  # ← キャッシュ済みPIL Image
 
-if st.session_state.last_coords:
-    draw = ImageDraw.Draw(img)
-    x = st.session_state.last_coords["x"]
-    y = st.session_state.last_coords["y"]
-    radius = 5
-    draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="red")
+# 直近の座標で作った「マーク付き画像」をセッションに保持し、座標が変わった時だけ再生成
+def compose_marked_image(base: Image.Image, coords: dict | None) -> bytes:
+    """ベース画像に赤点を描いてPNG bytesを返す。coords=Noneならベースだけ。"""
+    canvas = base.copy()
+    if coords:
+        draw = ImageDraw.Draw(canvas)
+        x, y = coords["x"], coords["y"]
+        r = 5
+        draw.ellipse((x - r, y - r, x + r, y + r), fill="red")
+    buf = BytesIO()
+    canvas.save(buf, format="PNG")
+    return buf.getvalue()
+
+# 初期化
+if "marked_img_bytes" not in st.session_state:
+    st.session_state.marked_img_bytes = compose_marked_image(base_img, None)
+if "last_coords" not in st.session_state:
+    st.session_state.last_coords = None
 
 st.markdown("### ストライクゾーンをクリック👇")
-coords = streamlit_image_coordinates(img, key="strike_zone_coords")
-if coords:
-    st.session_state.last_coords = coords
 
+# ここで width を適度に下げると軽くなります（例: 320〜400）
+coords = streamlit_image_coordinates(
+    Image.open(BytesIO(st.session_state.marked_img_bytes)),
+    key="strike_zone_coords",
+    width=360
+)
+
+# 座標が変わった時だけ、マーク付き画像を再生成
+if coords and coords != st.session_state.last_coords:
+    st.session_state.last_coords = coords
+    st.session_state.marked_img_bytes = compose_marked_image(base_img, coords)
+
+# 表示用のコース文字列
 if st.session_state.last_coords:
     pitch_course = f"X:{st.session_state.last_coords['x']}, Y:{st.session_state.last_coords['y']}"
 else:
