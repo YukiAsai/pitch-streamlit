@@ -26,14 +26,29 @@ def get_base_image(side: str) -> Image.Image:
     img = Image.open(BytesIO(data)).convert("RGBA")
     return img
 
-
-TARGET_WIDTH = 300  # 軽量化用
+TARGET_WIDTH = 300
+BACKGROUND_RGB = (255, 255, 255)   # ← 背景を白に。薄いグレーなら (245,245,245) など
 
 @st.cache_resource(show_spinner=False)
 def get_base_image(side: str) -> Image.Image:
-    """利き腕ごとのベース画像を一度だけ読み込んで固定幅に縮小"""
+    """
+    利き腕ごとのベース画像を読み込み。
+    透過PNGの場合は指定背景色に合成してからRGBにして、固定幅に縮小して返す。
+    """
     path = "strike_zone_right.png" if side == "右" else "strike_zone_left.png"
-    img = Image.open(path).convert("RGB")
+    img = Image.open(path)
+
+    # 透過がある場合は背景に合成
+    if img.mode in ("RGBA", "LA") or ("transparency" in img.info):
+        img = img.convert("RGBA")
+        bg = Image.new("RGB", img.size, BACKGROUND_RGB)
+        bg.paste(img, mask=img.split()[3])  # alpha を使って合成
+        img = bg
+    else:
+        # 透過なしならそのままRGBへ
+        img = img.convert("RGB")
+
+    # 固定幅に縮小
     w, h = img.size
     if w != TARGET_WIDTH:
         new_h = int(h * TARGET_WIDTH / w)
