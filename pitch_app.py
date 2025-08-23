@@ -12,20 +12,6 @@ from google.oauth2.service_account import Credentials
 
 from io import BytesIO
 
-@st.cache_data(show_spinner=False)
-def load_strike_zone_bytes(path: str) -> bytes:
-    # 画像バイトをキャッシュ（PILのオブジェクトではなく bytes を返すのが安定）
-    with open(path, "rb") as f:
-        return f.read()
-
-@st.cache_data(show_spinner=False)
-def get_base_image(side: str) -> Image.Image:
-    """利き腕ごとのベース画像(PIL Image)をキャッシュして返す"""
-    path = "strike_zone_right.png" if side == "右" else "strike_zone_left.png"
-    data = load_strike_zone_bytes(path)
-    img = Image.open(BytesIO(data)).convert("RGBA")
-    return img
-
 TARGET_WIDTH = 300
 BACKGROUND_RGB = (255, 255, 255)   # ← 背景を白に。薄いグレーなら (245,245,245) など
 
@@ -317,13 +303,19 @@ if use_light_mode:
 else:
     # 打席情報から打者の利き腕を取得
     batter_side = st.session_state.atbat_info.get("batter_side", "右") if st.session_state.atbat_info else "右"
-    # 打者の利き腕からベース画像を取得（キャッシュ利用）
+
+    # ベース画像（固定幅/TARGET_WIDTH に縮小済み）
     strike_zone_img = "strike_zone_right.png" if batter_side == "右" else "strike_zone_left.png"
     if not os.path.exists(strike_zone_img):
         st.error(f"❌ {strike_zone_img} が見つかりません。ファイル名・場所を確認してください。")
         st.stop()
 
-    base_img = get_base_image(batter_side)  # ← キャッシュ済みPIL Image
+    base_img = get_base_image(batter_side)   # ← @st.cache_resource 版
+    img_w, img_h = base_img.size
+
+    # 表示サイズは実画像サイズに合わせて固定（列幅に影響されないよう明示）
+    display_w = TARGET_WIDTH
+    display_h = int(img_h * display_w / img_w)
 
     # 初期化
     if "marked_img_bytes" not in st.session_state:
@@ -333,24 +325,27 @@ else:
 
     st.markdown("### ストライクゾーンをクリック👇")
 
-    # ここで width を適度に下げると軽くなります（例: 320〜400）
-    coords = streamlit_image_coordinates(
+    # クリック座標（表示サイズ基準）を取得
+    coords_disp = streamlit_image_coordinates(
         Image.open(BytesIO(st.session_state.marked_img_bytes)),
         key="strike_zone_coords",
-        width=360
+        width=display_w
     )
 
-    # スケール補正：表示サイズ → 実画像サイズ
+    # 表示 → 実画像へのスケール補正
     def to_image_coords(c):
         if not c:
             return None
         sx = img_w / float(display_w)
         sy = img_h / float(display_h)
         return {"x": int(round(c["x"] * sx)), "y": int(round(c["y"] * sy))}
-        # 座標が変わった時だけ、マーク付き画像を再生成
-        if coords and coords != st.session_state.last_coords:
-            st.session_state.last_coords = coords
-            st.session_state.marked_img_bytes = compose_marked_image_jpeg(base_img, coords)
+
+    img_coords = to_image_coords(coords_disp) if coords_disp else None
+
+    # 座標が変わった時だけ赤点を再描画
+    if img_coords and img_coords != st.session_state.last_coords:
+        st.session_state.last_coords = img_coords
+        st.session_state.marked_img_bytes = compose_marked_image_jpeg(base_img, img_coords)
 
     # 表示用のコース文字列
     if st.session_state.last_coords:
