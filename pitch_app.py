@@ -1,6 +1,6 @@
 import streamlit as st
 from datetime import datetime
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 from streamlit_image_coordinates import streamlit_image_coordinates
 import os
 import uuid
@@ -37,6 +37,9 @@ def get_base_image(side: str) -> Image.Image:
     """
     path = "strike_zone_right.png" if side == "右" else "strike_zone_left.png"
     img = Image.open(path)
+
+    # EXIFの向きを補正
+    img = ImageOps.exif_transpose(img)
 
     # 透過がある場合は背景に合成
     if img.mode in ("RGBA", "LA") or ("transparency" in img.info):
@@ -337,10 +340,17 @@ else:
         width=360
     )
 
-    # 座標が変わった時だけ、マーク付き画像を再生成
-    if coords and coords != st.session_state.last_coords:
-        st.session_state.last_coords = coords
-        st.session_state.marked_img_bytes = compose_marked_image_jpeg(base_img, coords)
+    # スケール補正：表示サイズ → 実画像サイズ
+    def to_image_coords(c):
+        if not c:
+            return None
+        sx = img_w / float(display_w)
+        sy = img_h / float(display_h)
+        return {"x": int(round(c["x"] * sx)), "y": int(round(c["y"] * sy))}
+        # 座標が変わった時だけ、マーク付き画像を再生成
+        if coords and coords != st.session_state.last_coords:
+            st.session_state.last_coords = coords
+            st.session_state.marked_img_bytes = compose_marked_image_jpeg(base_img, coords)
 
     # 表示用のコース文字列
     if st.session_state.last_coords:
