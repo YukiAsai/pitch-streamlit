@@ -3,6 +3,7 @@ from datetime import datetime
 from PIL import Image, ImageDraw
 from streamlit_image_coordinates import streamlit_image_coordinates
 import os
+import uuid
 
 import gspread
 import pandas as pd
@@ -27,14 +28,14 @@ def save_to_google_sheets(data):
     # スプレッドシート本体を開く
     spreadsheet = client.open("Pitch_Data_2025")
 
-    # 最新の一球だけを保存
-    latest = data[-1]
+    # 最新の一球
+    latest = data[-1]  # ここに "row_id" が含まれている前提
     date = latest.get("date", "unknown")
     top_team = latest.get("top_team", "TopTeam")
     bottom_team = latest.get("bottom_team", "BottomTeam")
     top_bottom = latest.get("top_bottom", "表")
 
-    # 攻撃側のチーム名（＝打者チーム）を使ってシート名を決定
+    # 攻撃側チーム名でシート名
     batter_team = top_team if top_bottom == "表" else bottom_team
     sheet_name = f"{date}_{batter_team}"
 
@@ -43,14 +44,68 @@ def save_to_google_sheets(data):
         worksheet = spreadsheet.worksheet(sheet_name)
         existing_data = worksheet.get_all_values()
         has_header = len(existing_data) > 0
+        existing_header = existing_data[0] if has_header else []
     except gspread.exceptions.WorksheetNotFound:
         worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=30)
         has_header = False
+        existing_header = []
+
+    # 望ましいヘッダー（latest のキー順）
+    desired_header = list(latest.keys())
 
     if not has_header:
-        worksheet.append_row(list(latest.keys()))  # ヘッダー行追加
+        worksheet.append_row(desired_header)
+        existing_header = desired_header
+    else:
+        # 既存ヘッダーに不足カラムがあれば右端に追加
+        missing = [col for col in desired_header if col not in existing_header]
+        if missing:
+            new_header = existing_header + missing
+            worksheet.update('1:1', [new_header])
+            existing_header = new_header
 
-    worksheet.append_row(list(latest.values()))  # データ行追加
+    # 行データを既存ヘッダー順に並べる
+    row_to_append = [latest.get(col, "") for col in existing_header]
+    worksheet.append_row(row_to_append)
+
+    return sheet_name
+
+def delete_row_by_id(sheet_name: str, row_id: str) -> bool:
+    """指定シートの 'row_id' 列で一致する行だけを削除。成功なら True。"""
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=scope
+    )
+    client = gspread.authorize(creds)
+    spreadsheet = client.open("Pitch_Data_2025")
+
+    try:
+        ws = spreadsheet.worksheet(sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        return False
+
+    values = ws.get_all_values()
+    if not values:
+        return False
+
+    header = values[0]
+    try:
+        col_idx_0 = header.index("row_id")  # 0-based
+    except ValueError:
+        return False
+
+    # 2行目以降で一致行を探す
+    for i in range(1, len(values)):
+        if len(values[i]) > col_idx_0 and values[i][col_idx_0] == row_id:
+            ws.delete_rows(i + 1)  # gspread は 1-based
+            return True
+    return False
 
 st.set_page_config(page_title="一球データ入力アプリ", layout="wide")
 
@@ -65,12 +120,44 @@ if "pitches" not in st.session_state:
     st.session_state.pitches = []
 if "last_coords" not in st.session_state:
     st.session_state.last_coords = None
+if "save_log" not in st.session_state:          
+    st.session_state.save_log = []
 
 # □ 試合リセットボタン
-st.sidebar.header("リセット操作")
-if st.sidebar.button("🔄 全てのデータをリセット"):
+st.sidebar.header("試合リセット")
+if st.sidebar.button("🔄 試合を変更"):
     st.session_state.clear()
     st.rerun()
+
+
+# □ 取り消しUI
+with st.sidebar.expander("⏪ 入力取り消し（最大10件）", expanded=False):
+    n_to_undo = st.number_input("取り消す件数", min_value=1, max_value=10, value=1, step=1)
+    if st.button("選択件数を取り消す"):
+        n = int(min(n_to_undo, len(st.session_state.pitches), len(st.session_state.save_log)))
+        if n <= 0:
+            st.warning("取り消せる履歴がありません。")
+        else:
+            ok_count = 0
+            for _ in range(n):
+                log_entry = st.session_state.save_log.pop()
+                sheet_name = log_entry["sheet"]
+                row_id = log_entry["row_id"]
+
+                # シート側：該当行のみ削除
+                deleted = delete_row_by_id(sheet_name, row_id)
+
+                # ローカル履歴側：該当 row_id の1件を削除
+                for j in range(len(st.session_state.pitches) - 1, -1, -1):
+                    if st.session_state.pitches[j].get("row_id") == row_id:
+                        st.session_state.pitches.pop(j)
+                        break
+
+                if deleted:
+                    ok_count += 1
+
+            st.success(f"{n}件取り消しました（スプレッドシート側は {ok_count}/{n} 行削除）")
+            st.rerun()
 
 # □ 1. 試合情報入力
 
@@ -175,13 +262,14 @@ else:
 # 一球の共通入力（フォーム外。pitch_resultはここで選ぶ）
 
 strategy = st.selectbox("作戦", ["なし", "バント", "エンドラン", "スクイズ"])
-pitch_type = st.selectbox("球種", ["ストレート", "カーブ", "スライダー", "チェンジアップ", "フォーク", "その他"])
-pitch_result = st.selectbox("結果", ["ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル",  "牽制", "打席終了"], key="pitch_result_selectbox")
 if strategy != "なし":
     st.markdown("**【作戦成否】**")
     strategy_result = st.selectbox(" 作戦結果",["成", "否"] ,key="stategy_result_select")
 else:
     atbat_result = ""
+pitch_type = st.selectbox("球種", ["ストレート", "カーブ", "スライダー", "チェンジアップ", "フォーク", "その他"])
+pitch_result = st.selectbox("結果", ["ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル",  "牽制", "打席終了"], key="pitch_result_selectbox")
+
 
 # ↓打席終了のときフォーム外で詳細を即時入力
 if pitch_result == "打席終了":
@@ -194,7 +282,7 @@ else:
 # ↓インプレーのときだけフォーム外で詳細を即時入力
 if atbat_result == "インプレー":
     st.markdown("**【インプレー詳細入力】**")
-    batted_type = st.selectbox("打球の種類", ["フライ", "ゴロ", "ライナー"], key="batted_type_select")
+    batted_type = st.selectbox("打球の種類", ["フライ", "ゴロ", "ライナー"], key="inplay_result_select")
     batted_position = st.selectbox("打球方向", ["投手", "一塁", "二塁", "三塁", "遊撃", "左翼", "中堅", "右翼","左中","右中"], key="batted_pos_select")
     batted_outcome = st.selectbox("結果", ["ヒット","２塁打","3塁打","ホームラン", "アウト", "エラー", "併殺", "犠打", "犠飛"], key="batted_out_select")
 
@@ -210,7 +298,13 @@ if st.button("この一球を記録"):
     inning_info = st.session_state.inning_info
     atbat_info = st.session_state.atbat_info
 
+    # ★ 一意IDを付与
+    row_id = str(uuid.uuid4())
+
     pitch_record = {
+        # ★ 主キー
+        "row_id": row_id,
+
         # 試合情報
         "date": game_info.get("date", ""),
         "top_team": game_info.get("top_team", ""),
@@ -240,7 +334,13 @@ if st.button("この一球を記録"):
     }
 
     st.session_state.pitches.append(pitch_record)
-    save_to_google_sheets(st.session_state.pitches)
+    sheet_name = save_to_google_sheets(st.session_state.pitches)
+
+    # ★ どのシートのどの行かを記録
+    st.session_state.save_log.append({"sheet": sheet_name, "row_id": row_id})
+    if len(st.session_state.save_log) > 100:
+        st.session_state.save_log = st.session_state.save_log[-100:]
+
     st.success("一球の情報を保存しました")
 
 # □ 最新の入力履歴表示
