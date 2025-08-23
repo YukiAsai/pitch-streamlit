@@ -145,6 +145,9 @@ if st.sidebar.button("🔄 試合を変更"):
     st.session_state.clear()
     st.rerun()
 
+# □ 軽量モード
+use_light_mode = st.sidebar.toggle("⚡ 軽量モード（画像クリックを使わない）", value=False)
+
 
 # □ 取り消しUI
 with st.sidebar.expander("⏪ 入力取り消し（最大10件）", expanded=False):
@@ -244,61 +247,82 @@ if st.session_state.atbat_info:
 
 # □ 4. 一球情報入力
 st.header("4. 一球情報入力")
+#コース選択
+if use_light_mode:
+    st.markdown("### グリッドでコースを選択（9×9）")
+    cols = st.columns([1,1])
+    with cols[0]:
+        gx = st.select_slider("横（1=内角, 9=外角）", options=list(range(1, 10)), value=5, key="grid_x")
+    with cols[1]:
+        gy = st.select_slider("縦（1=低め, 9=高め）", options=list(range(1, 10)), value=5, key="grid_y")
 
-# 打席情報から打者の利き腕を取得
-batter_side = st.session_state.atbat_info.get("batter_side", "右") if st.session_state.atbat_info else "右"
-# 打者の利き腕からベース画像を取得（キャッシュ利用）
-strike_zone_img = "strike_zone_right.png" if batter_side == "右" else "strike_zone_left.png"
-if not os.path.exists(strike_zone_img):
-    st.error(f"❌ {strike_zone_img} が見つかりません。ファイル名・場所を確認してください。")
-    st.stop()
+    # 9×9セルの中心を座標化（base_img 幅・高さに合わせる）
+    base_img = get_base_image(batter_side)
+    W, H = base_img.size
+    cell_w, cell_h = W/9.0, H/9.0
+    x = int((gx - 0.5) * cell_w)
+    y = int((gy - 0.5) * cell_h)
 
-base_img = get_base_image(batter_side)  # ← キャッシュ済みPIL Image
+    st.session_state.last_coords = {"x": x, "y": y}
+    st.session_state.marked_img_bytes = compose_marked_image_jpeg(base_img, st.session_state.last_coords)
 
-# 直近の座標で作った「マーク付き画像」をセッションに保持し、座標が変わった時だけ再生成
-def compose_marked_image(base: Image.Image, coords: dict | None) -> bytes:
-    """ベース画像に赤点を描いてPNG bytesを返す。coords=Noneならベースだけ。"""
-    canvas = base.copy()
-    if coords:
-        draw = ImageDraw.Draw(canvas)
-        x, y = coords["x"], coords["y"]
-        r = 5
-        draw.ellipse((x - r, y - r, x + r, y + r), fill="red")
-    buf = BytesIO()
-    canvas.save(buf, format="PNG")
-    return buf.getvalue()
+    st.image(Image.open(BytesIO(st.session_state.marked_img_bytes)), width=TARGET_WIDTH)
+    pitch_course = f"X:{x}, Y:{y}"
 
-# 初期化
-if "marked_img_bytes" not in st.session_state:
-    st.session_state.marked_img_bytes = compose_marked_image(base_img, None)
-if "last_coords" not in st.session_state:
-    st.session_state.last_coords = None
-
-st.markdown("### ストライクゾーンをクリック👇")
-
-# ここで width を適度に下げると軽くなります（例: 320〜400）
-coords = streamlit_image_coordinates(
-    Image.open(BytesIO(st.session_state.marked_img_bytes)),
-    key="strike_zone_coords",
-    width=360
-)
-
-# 座標が変わった時だけ、マーク付き画像を再生成
-if coords and coords != st.session_state.last_coords:
-    st.session_state.last_coords = coords
-    st.session_state.marked_img_bytes = compose_marked_image(base_img, coords)
-
-# 表示用のコース文字列
-if st.session_state.last_coords:
-    pitch_course = f"X:{st.session_state.last_coords['x']}, Y:{st.session_state.last_coords['y']}"
 else:
-    pitch_course = "未選択"
+    # 打席情報から打者の利き腕を取得
+    batter_side = st.session_state.atbat_info.get("batter_side", "右") if st.session_state.atbat_info else "右"
+    # 打者の利き腕からベース画像を取得（キャッシュ利用）
+    strike_zone_img = "strike_zone_right.png" if batter_side == "右" else "strike_zone_left.png"
+    if not os.path.exists(strike_zone_img):
+        st.error(f"❌ {strike_zone_img} が見つかりません。ファイル名・場所を確認してください。")
+        st.stop()
+
+    base_img = get_base_image(batter_side)  # ← キャッシュ済みPIL Image
+
+    # 直近の座標で作った「マーク付き画像」をセッションに保持し、座標が変わった時だけ再生成
+    def compose_marked_image(base: Image.Image, coords: dict | None) -> bytes:
+        """ベース画像に赤点を描いてPNG bytesを返す。coords=Noneならベースだけ。"""
+        canvas = base.copy()
+        if coords:
+            draw = ImageDraw.Draw(canvas)
+            x, y = coords["x"], coords["y"]
+            r = 5
+            draw.ellipse((x - r, y - r, x + r, y + r), fill="red")
+        buf = BytesIO()
+        canvas.save(buf, format="PNG")
+        return buf.getvalue()
+
+    # 初期化
+    if "marked_img_bytes" not in st.session_state:
+        st.session_state.marked_img_bytes = compose_marked_image(base_img, None)
+    if "last_coords" not in st.session_state:
+        st.session_state.last_coords = None
+
+    st.markdown("### ストライクゾーンをクリック👇")
+
+    # ここで width を適度に下げると軽くなります（例: 320〜400）
+    coords = streamlit_image_coordinates(
+        Image.open(BytesIO(st.session_state.marked_img_bytes)),
+        key="strike_zone_coords",
+        width=360
+    )
+
+    # 座標が変わった時だけ、マーク付き画像を再生成
+    if coords and coords != st.session_state.last_coords:
+        st.session_state.last_coords = coords
+        st.session_state.marked_img_bytes = compose_marked_image(base_img, coords)
+
+    # 表示用のコース文字列
+    if st.session_state.last_coords:
+        pitch_course = f"X:{st.session_state.last_coords['x']}, Y:{st.session_state.last_coords['y']}"
+    else:
+        pitch_course = "未選択"
 
 # 一球の共通入力（フォーム外。pitch_resultはここで選ぶ）
 
 strategy = st.selectbox("作戦", ["なし", "バント", "エンドラン", "スクイズ"])
 if strategy != "なし":
-    st.markdown("**【作戦成否】**")
     strategy_result = st.selectbox(" 作戦結果",["成", "否"] ,key="stategy_result_select")
 else:
     atbat_result = ""
