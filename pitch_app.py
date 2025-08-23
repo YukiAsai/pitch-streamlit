@@ -309,7 +309,7 @@ else:
 
     # 初期化
     if "marked_img_bytes" not in st.session_state:
-        st.session_state.marked_img_bytes = compose_marked_image(base_img, None)
+        st.session_state.marked_img_bytes = compose_marked_image_jpeg(base_img, None)
     if "last_coords" not in st.session_state:
         st.session_state.last_coords = None
 
@@ -325,7 +325,7 @@ else:
     # 座標が変わった時だけ、マーク付き画像を再生成
     if coords and coords != st.session_state.last_coords:
         st.session_state.last_coords = coords
-        st.session_state.marked_img_bytes = compose_marked_image(base_img, coords)
+        st.session_state.marked_img_bytes = compose_marked_image_jpeg(base_img, coords)
 
     # 表示用のコース文字列
     if st.session_state.last_coords:
