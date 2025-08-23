@@ -281,25 +281,39 @@ st.header("4. 一球情報入力")
 #コース選択
 if use_light_mode:
     st.markdown("### グリッドでコースを選択（9×9）")
-    cols = st.columns([1,1])
-    with cols[0]:
+
+    # 表示用のベース画像（固定幅に縮小済み）
+    batter_side = st.session_state.atbat_info.get("batter_side", "右") if st.session_state.atbat_info else "右"
+    base_img = get_base_image(batter_side)
+
+    # --- ここが今回の肝：ゾーン境界（表示画像のピクセル基準） ---
+    X_LEFT, X_RIGHT = 89, 212
+    Y_TOP, Y_BOTTOM = 215, 81   # 上が215、下が81（Yが大きい方が上という仕様に合わせる）
+
+    # 選択UI
+    c1, c2 = st.columns(2)
+    with c1:
         gx = st.select_slider("横（1=内角, 9=外角）", options=list(range(1, 10)), value=5, key="grid_x")
-    with cols[1]:
+    with c2:
         gy = st.select_slider("縦（1=低め, 9=高め）", options=list(range(1, 10)), value=5, key="grid_y")
 
-    # 9×9セルの中心を座標化（base_img 幅・高さに合わせる）
-    base_img = get_base_image(batter_side)
-    W, H = base_img.size
-    cell_w, cell_h = W/9.0, H/9.0
-    x = int((gx - 0.5) * cell_w)
-    y = int((gy - 0.5) * cell_h)
+    # 区間の中心にマップ（線形補間）。Yは top→bottom へ向かうので逆方向もOK
+    def lerp(a, b, t):  # t in [0,1)
+        return a + (b - a) * t
 
+    t_x = (gx - 0.5) / 9.0
+    t_y = (gy - 0.5) / 9.0
+
+    x = int(round(lerp(X_LEFT,  X_RIGHT,  t_x)))
+    y = int(round(lerp(Y_TOP,   Y_BOTTOM, t_y)))  # 上端=215→下端=81 方向で補間
+
+    # 状態更新＆表示
     st.session_state.last_coords = {"x": x, "y": y}
     st.session_state.marked_img_bytes = compose_marked_image_jpeg(base_img, st.session_state.last_coords)
 
     st.image(Image.open(BytesIO(st.session_state.marked_img_bytes)), width=TARGET_WIDTH)
     pitch_course = f"X:{x}, Y:{y}"
-
+    
 else:
     # 打席情報から打者の利き腕を取得
     batter_side = st.session_state.atbat_info.get("batter_side", "右") if st.session_state.atbat_info else "右"
