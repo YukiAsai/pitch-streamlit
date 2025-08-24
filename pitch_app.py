@@ -528,28 +528,28 @@ if st.session_state.pitches:
 # === スポナビ風の途中経過ビュー =========================================
 st.markdown("## 📰 試合経過")
 
-# ---- 0) 現状から “暫定” の状態を推定（B/S/Oと直近ログの簡易計算） ----
+# ---- 0) 現状から “暫定” の状態を推定（B/S/O と直近ログ用） ----
 def summarize_state(pitches: list[dict]):
     balls = strikes = outs = 0
     last_5 = []
     for rec in pitches:
         pr = rec.get("pitch_result", "") or ""
-        ar = rec.get("atbat_result", "") or ""        # 無ければ空文字（互換）
+        ar = rec.get("atbat_result", "") or ""
         bo = rec.get("batted_outcome", "") or ""
 
-        # 直近プレーの表示用テキスト
         inn = rec.get("inning", "?")
         tb  = rec.get("top_bottom", "?")
-        batter = rec.get("batter", "")
+        batter  = rec.get("batter", "")
         pitcher = rec.get("pitcher", "")
+
         desc = f"{inn}回{tb}｜{batter} vs {pitcher}｜{pr}"
         if ar:
             desc += f" → {ar}"
-        if bo:
+        if ar == "インプレー" and bo:
             desc += f"（{bo}）"
         last_5.append(desc)
 
-        # カウント（簡易ルール）
+        # 簡易カウント
         if pr.startswith("ボール"):
             balls = min(3, balls + 1)
         elif pr.startswith("ストライク"):
@@ -563,26 +563,18 @@ def summarize_state(pitches: list[dict]):
         if pr == "打席終了":
             if ar.startswith("三振"):
                 outs = min(3, outs + 1)
-            if ar == "インプレー":
-                if bo in ("アウト", "併殺", "犠打", "犠飛"):
-                    outs = min(3, outs + (2 if bo == "併殺" else 1))
-            # 四球/死球/安打はアウト加算なし想定
-
+            if ar == "インプレー" and bo in ("アウト", "併殺", "犠打", "犠飛"):
+                outs = min(3, outs + (2 if bo == "併殺" else 1))
             balls = 0
             strikes = 0
 
-    return {
-        "balls": balls,
-        "strikes": strikes,
-        "outs": outs,
-        "last_5": last_5[-5:],
-    }
+    return {"balls": balls, "strikes": strikes, "outs": outs, "last_5": last_5[-5:]}
 
 state = summarize_state(st.session_state.pitches)
 
-# ---- 1) ヘッダー（スコアボード風帯） ----
+# ---- 1) ヘッダー（スコアボード帯） ----
 game = st.session_state.game_info if st.session_state.game_info else {}
-inn = st.session_state.inning_info if st.session_state.inning_info else {}
+inn  = st.session_state.inning_info if st.session_state.inning_info else {}
 t_top = game.get("top_team", "-")
 t_bot = game.get("bottom_team", "-")
 inning_lab = f"{inn.get('inning','-')}回{inn.get('top_bottom','-')}" if inn else "-"
@@ -595,7 +587,7 @@ with hdr2:
 with hdr3:
     st.markdown(f"### {t_bot}")
 
-# ---- 2) B/S/O と ベース（SVG） ----
+# ---- 2) B/S/O と Bases（SVG） ----
 def bases_svg(r1: bool, r2: bool, r3: bool) -> str:
     """ひし形の塁マーク。走者がいれば緑、なければ白。"""
     def base(x, y, filled: bool) -> str:
@@ -635,7 +627,7 @@ def bso_lights(b, s, o) -> str:
         '</svg>'
     )
 
-# ランナーは直近の打席情報フォームの値（自動進塁ロジックは未実装）
+# ランナーは打席情報フォームの値をそのまま表示（自動進塁は未実装）
 rinfo = st.session_state.atbat_info if st.session_state.atbat_info else {}
 r1 = bool(rinfo.get("runner_1b"))
 r2 = bool(rinfo.get("runner_2b"))
@@ -648,19 +640,98 @@ with colA:
     st.markdown("#### Bases")
     st.components.v1.html(bases_svg(r1, r2, r3), height=130)
 
-with colB:
-    st.markdown("#### 最終プレー（直近5件）")
-    if state["last_5"]:
-        for line in reversed(state["last_5"]):
-            st.markdown(f"- {line}")
-    else:
-        st.caption("まだプレーはありません。")
+# ---- 3) 直近5「打席」：作戦+成否／ランナー状況／イニング見出し付き ----
+def _join_nonempty(sep, *xs):
+    return sep.join([x for x in xs if x])
 
-# ---- 3) イニング表（簡易ログ） ----
+def _runner_label(rec: dict) -> str:
+    r1 = bool(rec.get("runner_1b"))
+    r2 = bool(rec.get("runner_2b"))
+    r3 = bool(rec.get("runner_3b"))
+    if not (r1 or r2 or r3):
+        return "走者なし"
+    names = []
+    if r1: names.append("一")
+    if r2: names.append("二")
+    if r3: names.append("三")
+    return "走者:" + "".join(names) + "塁"
+
+def last_5_atbats_grouped(pitches: list[dict]) -> list[tuple[str, str]]:
+    """
+    直近5打席を (見出し, 本文) の配列で返す。
+    見出し：'3回表' など（前件とイニングが変わる箇所だけ入る。変わらなければ空文字）
+    本文  ：'打者 vs 投手｜打席結果（インプレーは詳細付）｜作戦:◯（成否）｜走者:...'
+    ※ 新しい→古いの順で返す
+    """
+    ab = [rec for rec in pitches if rec.get("pitch_result") == "打席終了"]
+    ab = ab[-5:]
+    result: list[tuple[str, str]] = []
+    prev_inn = prev_tb = None
+
+    # 古い→新しいで処理し、最後に反転して最新→過去に
+    tmp: list[tuple[str, str]] = []
+    for rec in ab:
+        inn = rec.get("inning", "?")
+        tb  = rec.get("top_bottom", "?")
+        batter  = rec.get("batter", "")
+        pitcher = rec.get("pitcher", "")
+        ar = (rec.get("atbat_result") or "打席終了").strip()
+
+        if ar == "インプレー":
+            detail = _join_nonempty(
+                "/",
+                rec.get("batted_type", ""),
+                rec.get("batted_position", ""),
+                rec.get("batted_outcome", "")
+            )
+            ar_disp = _join_nonempty(" ", ar, detail)
+        else:
+            ar_disp = ar
+
+        strat = rec.get("strategy", "なし") or "なし"
+        strat_res = rec.get("strategy_result", "")
+        if strat != "なし":
+            strat_disp = f"作戦:{strat}" + (f"（{strat_res}）" if strat_res else "")
+        else:
+            strat_disp = ""
+
+        runners = _runner_label(rec)
+
+        body = "｜".join([
+            f"{batter} vs {pitcher}",
+            ar_disp,
+            strat_disp if strat_disp else "",
+            runners
+        ]).replace("｜｜", "｜").strip("｜")
+
+        heading = ""
+        if (inn, tb) != (prev_inn, prev_tb):
+            heading = f"{inn}回{tb}"
+            prev_inn, prev_tb = inn, tb
+
+        tmp.append((heading, body))
+
+    result = list(reversed(tmp))
+    return result
+
+with colB:
+    st.markdown("#### 最終プレー（直近5打席）")
+    items = last_5_atbats_grouped(st.session_state.pitches)
+    if items:
+        current_heading = None
+        for heading, body in items:
+            if heading and heading != current_heading:
+                st.markdown(f"**— {heading} —**")
+                current_heading = heading
+            st.markdown(f"- {body}")
+    else:
+        st.caption("まだ打席結果がありません。")
+
+# ---- 4) イニング表（簡易ログ） ----
 with st.expander("🧾 イニングごとの記録（簡易ログ）", expanded=False):
     if st.session_state.pitches:
         df = pd.DataFrame(st.session_state.pitches)
-        cols = ["inning", "top_bottom", "batter", "pitch_result", "atbat_result", "batted_outcome"]
+        cols = ["inning", "top_bottom", "batter", "pitch_result", "atbat_result", "batted_outcome", "strategy", "strategy_result"]
         show = [c for c in cols if c in df.columns]
         if show:
             st.dataframe(df[show].tail(30), use_container_width=True)
