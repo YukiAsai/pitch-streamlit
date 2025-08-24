@@ -140,6 +140,7 @@ def center_of_cell(col: int, row: int, bounds: dict):
 
 #スプレッドシートへの保存
 def save_to_google_sheets(data):
+    import re
     import gspread
     import pandas as pd
     from google.oauth2.service_account import Credentials
@@ -152,22 +153,20 @@ def save_to_google_sheets(data):
         st.secrets["gcp_service_account"], scopes=scope
     )
     client = gspread.authorize(creds)
-
-    # スプレッドシート本体を開く
     spreadsheet = client.open("Pitch_Data_2025")
 
-    # 最新の一球
-    latest = data[-1]  # ここに "row_id" が含まれている前提
+    latest = data[-1]
     date = latest.get("date", "unknown")
-    top_team = latest.get("top_team", "TopTeam")
-    bottom_team = latest.get("bottom_team", "BottomTeam")
-    top_bottom = latest.get("top_bottom", "表")
+    top_team = latest.get("top_team", "TopTeam").strip()
+    bottom_team = latest.get("bottom_team", "BottomTeam").strip()
 
-    # 攻撃側チーム名でシート名
-    batter_team = top_team if top_bottom == "表" else bottom_team
-    sheet_name = f"{date}_{batter_team}"
+    # 同一試合で固定のシート名（表裏・イニングに依存しない）
+    raw_sheet_name = f"{date}_{top_team}_vs_{bottom_team}"
+    # 禁止文字除去 + 長さ制限
+    sheet_name = re.sub(r'[:/\\\?\*\[\]]', ' ', raw_sheet_name).strip()
+    sheet_name = sheet_name[:100]
 
-    # シート取得または作成
+    # シート取得 or 作成
     try:
         worksheet = spreadsheet.worksheet(sheet_name)
         existing_data = worksheet.get_all_values()
@@ -178,23 +177,26 @@ def save_to_google_sheets(data):
         has_header = False
         existing_header = []
 
-    # 望ましいヘッダー（latest のキー順）
     desired_header = list(latest.keys())
 
+    # 列数が足りなければ増やす（ヘッダー更新や append 前に）
+    needed_cols = max(len(desired_header), len(existing_header))
+    if worksheet.col_count < needed_cols:
+        worksheet.add_cols(needed_cols - worksheet.col_count)
+
     if not has_header:
-        worksheet.append_row(desired_header)
+        worksheet.append_row(desired_header, value_input_option="RAW")
         existing_header = desired_header
     else:
-        # 既存ヘッダーに不足カラムがあれば右端に追加
         missing = [col for col in desired_header if col not in existing_header]
         if missing:
             new_header = existing_header + missing
+            # 1行目を新ヘッダーで上書き
             worksheet.update('1:1', [new_header])
             existing_header = new_header
 
-    # 行データを既存ヘッダー順に並べる
     row_to_append = [latest.get(col, "") for col in existing_header]
-    worksheet.append_row(row_to_append)
+    worksheet.append_row(row_to_append, value_input_option="RAW")
 
     return sheet_name
 
