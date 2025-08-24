@@ -15,38 +15,59 @@ from io import BytesIO
 TARGET_WIDTH = 300
 BACKGROUND_RGB = (255, 255, 255)   # ← 背景を白に。薄いグレーなら (245,245,245) など
 
+from io import BytesIO
+
+TARGET_WIDTH = 300  # 表示幅は固定に
+GRID_N = 9         # 9×9
+
 @st.cache_resource(show_spinner=False)
-def get_base_image(side: str) -> Image.Image:
+def make_strike_zone_base(hand: str = "右") -> Image.Image:
     """
-    利き腕ごとのベース画像を読み込み。
-    透過PNGの場合は指定背景色に合成してからRGBにして、固定幅に縮小して返す。
+    ストライクゾーンを線だけで描いたベース画像（RGB）を生成して返す。
+    hand == "左" の場合は水平反転して返す（お好みで）。
     """
-    path = "strike_zone_right.png" if side == "右" else "strike_zone_left.png"
-    img = Image.open(path)
+    # 好みのレイアウト（見やすい比率）
+    W = TARGET_WIDTH
+    H = int(W * 1.1)     # 縦横比は自由。ここでは少し縦長
+    PAD = int(W * 0.1)   # 余白
+    STROKE = 2
+    BG = (255, 255, 255)
+    LINE = (0, 0, 0)
 
-    # EXIFの向きを補正
-    img = ImageOps.exif_transpose(img)
+    # 画像キャンバス
+    img = Image.new("RGB", (W, H), BG)
+    draw = ImageDraw.Draw(img)
 
-    # 透過がある場合は背景に合成
-    if img.mode in ("RGBA", "LA") or ("transparency" in img.info):
-        img = img.convert("RGBA")
-        bg = Image.new("RGB", img.size, BACKGROUND_RGB)
-        bg.paste(img, mask=img.split()[3])  # alpha を使って合成
-        img = bg
-    else:
-        # 透過なしならそのままRGBへ
-        img = img.convert("RGB")
+    # ゾーン矩形（ここを“左端/右端/上端/下端”の基準にする）
+    x_left  = PAD
+    x_right = W - PAD
+    y_top   = PAD
+    y_bot   = H - PAD
 
-    # 固定幅に縮小
-    w, h = img.size
-    if w != TARGET_WIDTH:
-        new_h = int(h * TARGET_WIDTH / w)
-        img = img.resize((TARGET_WIDTH, new_h), Image.LANCZOS)
+    # 外枠
+    draw.rectangle([x_left, y_top, x_right, y_bot], outline=LINE, width=STROKE)
+
+    # 9×9のグリッド線
+    # 縦線
+    for i in range(1, GRID_N):
+        x = x_left + (x_right - x_left) * i / GRID_N
+        draw.line([(x, y_top), (x, y_bot)], fill=LINE, width=1)
+    # 横線
+    for j in range(1, GRID_N):
+        y = y_top + (y_bot - y_top) * j / GRID_N
+        draw.line([(x_left, y), (x_right, y)], fill=LINE, width=1)
+
+    # 投手・打者向きで反転したければここで水平反転
+    if hand == "左":
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+
+    # 必要なら座標をセッションに入れておく（後で使う）
+    st.session_state["_zone_bounds"] = dict(
+        x_left=x_left, x_right=x_right, y_top=y_top, y_bottom=y_bot, W=W, H=H
+    )
     return img
 
-#ストライクゾーン描画の関数
-def compose_marked_image_jpeg(base: Image.Image, coords: dict | None) -> bytes:
-    """ベース画像に点を描いて JPEG bytes を返す"""
+def compose_marked_image_png(base: Image.Image, coords: dict | None) -> bytes:
     canvas = base.copy()
     if coords:
         draw = ImageDraw.Draw(canvas)
@@ -54,8 +75,9 @@ def compose_marked_image_jpeg(base: Image.Image, coords: dict | None) -> bytes:
         r = 3
         draw.ellipse((x - r, y - r, x + r, y + r), fill=(255, 0, 0))
     buf = BytesIO()
-    canvas.save(buf, format="JPEG", quality=65, optimize=True)
+    canvas.save(buf, format="PNG", optimize=True)  # 線画はPNGの方が効く
     return buf.getvalue()
+
 
 #スプレッドシートへの保存
 def save_to_google_sheets(data):
@@ -309,44 +331,35 @@ if use_light_mode:
 
     # 状態更新＆表示
     st.session_state.last_coords = {"x": x, "y": y}
-    st.session_state.marked_img_bytes = compose_marked_image_jpeg(base_img, st.session_state.last_coords)
+    st.session_state.marked_img_bytes = compose_marked_image_png(base_img, st.session_state.last_coords)
 
     st.image(Image.open(BytesIO(st.session_state.marked_img_bytes)), width=TARGET_WIDTH)
     pitch_course = f"X:{x}, Y:{y}"
-    
+
 else:
-    # 打席情報から打者の利き腕を取得
+    # 打席情報から打者の利き腕
     batter_side = st.session_state.atbat_info.get("batter_side", "右") if st.session_state.atbat_info else "右"
 
-    # ベース画像（固定幅/TARGET_WIDTH に縮小済み）
-    strike_zone_img = "strike_zone_right.png" if batter_side == "右" else "strike_zone_left.png"
-    if not os.path.exists(strike_zone_img):
-        st.error(f"❌ {strike_zone_img} が見つかりません。ファイル名・場所を確認してください。")
-        st.stop()
-
-    base_img = get_base_image(batter_side)   # ← @st.cache_resource 版
+    # ディスクから読まずに線画ベースを生成 & キャッシュ取得
+    base_img = make_strike_zone_base(batter_side)
     img_w, img_h = base_img.size
-
-    # 表示サイズは実画像サイズに合わせて固定（列幅に影響されないよう明示）
     display_w = TARGET_WIDTH
     display_h = int(img_h * display_w / img_w)
 
     # 初期化
     if "marked_img_bytes" not in st.session_state:
-        st.session_state.marked_img_bytes = compose_marked_image_jpeg(base_img, None)
+        st.session_state.marked_img_bytes = compose_marked_image_png(base_img, None)
     if "last_coords" not in st.session_state:
         st.session_state.last_coords = None
 
     st.markdown("### ストライクゾーンをクリック👇")
-
-    # クリック座標（表示サイズ基準）を取得
     coords_disp = streamlit_image_coordinates(
         Image.open(BytesIO(st.session_state.marked_img_bytes)),
         key="strike_zone_coords",
         width=display_w
     )
 
-    # 表示 → 実画像へのスケール補正
+    # 表示→実画像のスケール補正（幅は固定なので誤差ほぼゼロだが一応）
     def to_image_coords(c):
         if not c:
             return None
@@ -359,13 +372,14 @@ else:
     # 座標が変わった時だけ赤点を再描画
     if img_coords and img_coords != st.session_state.last_coords:
         st.session_state.last_coords = img_coords
-        st.session_state.marked_img_bytes = compose_marked_image_jpeg(base_img, img_coords)
+        st.session_state.marked_img_bytes = compose_marked_image_png(base_img, img_coords)
 
     # 表示用のコース文字列
     if st.session_state.last_coords:
         pitch_course = f"X:{st.session_state.last_coords['x']}, Y:{st.session_state.last_coords['y']}"
     else:
         pitch_course = "未選択"
+   
 
 # 一球の共通入力（フォーム外。pitch_resultはここで選ぶ）
 
