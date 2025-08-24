@@ -18,55 +18,72 @@ BACKGROUND_RGB = (255, 255, 255)   # ← 背景を白に。薄いグレーなら
 from io import BytesIO
 
 TARGET_WIDTH = 300  # 表示幅は固定に
-GRID_N = 9         # 9×9
+GRID_TOTAL = 5          # 5x5：外周1マスがボールゾーン
+GRID_CORE = 3           # 内側3x3がストライクゾーン
+PAD_RATIO = 0.1         # 画像の余白割合
 
+# 線画ベースを生成＆キャッシュ
 @st.cache_resource(show_spinner=False)
-def make_strike_zone_base(hand: str = "右") -> Image.Image:
-    """
-    ストライクゾーンを線だけで描いたベース画像（RGB）を生成して返す。
-    hand == "左" の場合は水平反転して返す（お好みで）。
-    """
-    # 好みのレイアウト（見やすい比率）
+def make_strike_zone_base(hand: str = "右"):
     W = TARGET_WIDTH
-    H = int(W * 1.1)     # 縦横比は自由。ここでは少し縦長
-    PAD = int(W * 0.1)   # 余白
-    STROKE = 2
+    H = int(W * 1.1)  # 好みで縦横比
+    PAD = int(W * PAD_RATIO)
+    STROKE_OUT = 2
+    STROKE_GRID = 1
+
     BG = (255, 255, 255)
     LINE = (0, 0, 0)
+    CORE_FILL = (235, 245, 255)   # 内側3x3の淡い塗り（任意）
+    CORE_BORDER = (30, 90, 200)   # 内側3x3の枠色（任意）
 
-    # 画像キャンバス
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
-    # ゾーン矩形（ここを“左端/右端/上端/下端”の基準にする）
+    # 全体5x5の枠（ゾーン領域）
     x_left  = PAD
     x_right = W - PAD
     y_top   = PAD
     y_bot   = H - PAD
 
-    # 外枠
-    draw.rectangle([x_left, y_top, x_right, y_bot], outline=LINE, width=STROKE)
+    # 内側3x3の枠を算出（外周1マスぶん内側）
+    cell_w = (x_right - x_left) / GRID_TOTAL
+    cell_h = (y_bot - y_top) / GRID_TOTAL
+    core_left   = x_left + cell_w
+    core_right  = x_right - cell_w
+    core_top    = y_top + cell_h
+    core_bottom = y_bot - cell_h
 
-    # 9×9のグリッド線
-    # 縦線
-    for i in range(1, GRID_N):
-        x = x_left + (x_right - x_left) * i / GRID_N
-        draw.line([(x, y_top), (x, y_bot)], fill=LINE, width=1)
-    # 横線
-    for j in range(1, GRID_N):
-        y = y_top + (y_bot - y_top) * j / GRID_N
-        draw.line([(x_left, y), (x_right, y)], fill=LINE, width=1)
+    # まず内側3x3を淡色で塗る
+    draw.rectangle([core_left, core_top, core_right, core_bottom], fill=CORE_FILL, outline=None)
 
-    # 投手・打者向きで反転したければここで水平反転
+    # 外枠（5x5全体）
+    draw.rectangle([x_left, y_top, x_right, y_bot], outline=LINE, width=STROKE_OUT)
+
+    # グリッド線（縦 横）
+    for i in range(1, GRID_TOTAL):
+        x = x_left + cell_w * i
+        draw.line([(x, y_top), (x, y_bot)], fill=LINE, width=STROKE_GRID)
+    for j in range(1, GRID_TOTAL):
+        y = y_top + cell_h * j
+        draw.line([(x_left, y), (x_right, y)], fill=LINE, width=STROKE_GRID)
+
+    # 内側3x3の枠を強調
+    draw.rectangle([core_left, core_top, core_right, core_bottom], outline=CORE_BORDER, width=2)
+
+    # 打者が左なら左右反転（好みで）
     if hand == "左":
         img = img.transpose(Image.FLIP_LEFT_RIGHT)
 
-    # 必要なら座標をセッションに入れておく（後で使う）
-    st.session_state["_zone_bounds"] = dict(
-        x_left=x_left, x_right=x_right, y_top=y_top, y_bottom=y_bot, W=W, H=H
+    # 後で座標計算に使う境界を保存
+    bounds = dict(
+        x_left=x_left, x_right=x_right,
+        y_top=y_top, y_bottom=y_bot,
+        W=W, H=H,
+        cell_w=cell_w, cell_h=cell_h
     )
-    return img
+    return img, bounds
 
+# 赤点を描いてPNGで返す（線画はPNGが軽くて綺麗）
 def compose_marked_image_png(base: Image.Image, coords: dict | None) -> bytes:
     canvas = base.copy()
     if coords:
@@ -75,9 +92,39 @@ def compose_marked_image_png(base: Image.Image, coords: dict | None) -> bytes:
         r = 3
         draw.ellipse((x - r, y - r, x + r, y + r), fill=(255, 0, 0))
     buf = BytesIO()
-    canvas.save(buf, format="PNG", optimize=True)  # 線画はPNGの方が効く
+    canvas.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
 
+def point_to_5x5_cell(x: int, y: int, bounds: dict):
+    """
+    画像ピクセル (x,y) を 5x5 のセル番号 (col,row) に変換（1..5）。
+    ついでにストライクゾーン判定（内側3x3なら True）も返す。
+    """
+    x_left, x_right = bounds["x_left"], bounds["x_right"]
+    y_top, y_bottom = bounds["y_top"], bounds["y_bottom"]
+    cell_w, cell_h  = bounds["cell_w"], bounds["cell_h"]
+
+    # 範囲外は端に丸める
+    if x < x_left:  x = x_left
+    if x > x_right: x = x_right
+    if y < y_top:   y = y_top
+    if y > y_bottom:y = y_bottom
+
+    col = int((x - x_left) // cell_w) + 1  # 1..5
+    row = int((y - y_top)  // cell_h) + 1  # 1..5
+    col = max(1, min(5, col))
+    row = max(1, min(5, row))
+
+    in_strike = (2 <= col <= 4) and (2 <= row <= 4)  # 内側3x3がストライク
+    return col, row, in_strike
+
+def center_of_cell(col: int, row: int, bounds: dict):
+    """5x5の任意セルの中心ピクセル座標を返す（描画を中心にスナップしたい場合用）"""
+    x_left, y_top = bounds["x_left"], bounds["y_top"]
+    cell_w, cell_h = bounds["cell_w"], bounds["cell_h"]
+    cx = int(round(x_left + (col - 0.5) * cell_w))
+    cy = int(round(y_top  + (row - 0.5) * cell_h))
+    return {"x": cx, "y": cy}
 
 #スプレッドシートへの保存
 def save_to_google_sheets(data):
@@ -302,46 +349,32 @@ if st.session_state.atbat_info:
 st.header("4. 一球情報入力")
 #コース選択
 if use_light_mode:
-    st.markdown("### グリッドでコースを選択（9×9）")
-
-    # 表示用のベース画像（固定幅に縮小済み）
+    st.markdown("### グリッドでコースを選択（5×5）")
     batter_side = st.session_state.atbat_info.get("batter_side", "右") if st.session_state.atbat_info else "右"
-    base_img = get_base_image(batter_side)
+    base_img, zone_bounds = make_strike_zone_base(batter_side)
 
-    # --- ここが今回の肝：ゾーン境界（表示画像のピクセル基準） ---
-    X_LEFT, X_RIGHT = 89, 212
-    Y_TOP, Y_BOTTOM = 215, 81   # 上が215、下が81（Yが大きい方が上という仕様に合わせる）
-
-    # 選択UI
     c1, c2 = st.columns(2)
     with c1:
-        gx = st.select_slider("横（1=内角, 9=外角）", options=list(range(1, 10)), value=5, key="grid_x")
+        col = st.select_slider("横（1〜5）", options=[1,2,3,4,5], value=3, key="grid5_col")
     with c2:
-        gy = st.select_slider("縦（1=低め, 9=高め）", options=list(range(1, 10)), value=5, key="grid_y")
+        row = st.select_slider("縦（1〜5）", options=[1,2,3,4,5], value=3, key="grid5_row")
 
-    # 区間の中心にマップ（線形補間）。Yは top→bottom へ向かうので逆方向もOK
-    def lerp(a, b, t):  # t in [0,1)
-        return a + (b - a) * t
+    snap = center_of_cell(col, row, zone_bounds)
+    st.session_state.last_coords = snap
+    st.session_state.marked_img_bytes = compose_marked_image_png(base_img, snap)
 
-    t_x = (gx - 0.5) / 9.0
-    t_y = (gy - 0.5) / 9.0
-
-    x = int(round(lerp(X_LEFT,  X_RIGHT,  t_x)))
-    y = int(round(lerp(Y_TOP,   Y_BOTTOM, t_y)))  # 上端=215→下端=81 方向で補間
-
-    # 状態更新＆表示
-    st.session_state.last_coords = {"x": x, "y": y}
-    st.session_state.marked_img_bytes = compose_marked_image_png(base_img, st.session_state.last_coords)
-
+    in_strike = (2 <= col <= 4) and (2 <= row <= 4)
+    zone_label = "ストライク" if in_strike else "ボール"
     st.image(Image.open(BytesIO(st.session_state.marked_img_bytes)), width=TARGET_WIDTH)
-    pitch_course = f"X:{x}, Y:{y}"
+    pitch_course = f"({col},{row}) {zone_label} / X:{snap['x']}, Y:{snap['y']}"
+    
 
 else:
-    # 打席情報から打者の利き腕
+    # 打者の利き腕
     batter_side = st.session_state.atbat_info.get("batter_side", "右") if st.session_state.atbat_info else "右"
 
-    # ディスクから読まずに線画ベースを生成 & キャッシュ取得
-    base_img = make_strike_zone_base(batter_side)
+    # 線画のベース画像＋境界（キャッシュ）
+    base_img, zone_bounds = make_strike_zone_base(batter_side)
     img_w, img_h = base_img.size
     display_w = TARGET_WIDTH
     display_h = int(img_h * display_w / img_w)
@@ -359,7 +392,7 @@ else:
         width=display_w
     )
 
-    # 表示→実画像のスケール補正（幅は固定なので誤差ほぼゼロだが一応）
+    # 表示 → 実画像の補正（幅は固定なので誤差ほぼないが一応）
     def to_image_coords(c):
         if not c:
             return None
@@ -369,16 +402,24 @@ else:
 
     img_coords = to_image_coords(coords_disp) if coords_disp else None
 
-    # 座標が変わった時だけ赤点を再描画
-    if img_coords and img_coords != st.session_state.last_coords:
-        st.session_state.last_coords = img_coords
-        st.session_state.marked_img_bytes = compose_marked_image_png(base_img, img_coords)
+    # クリック→セル判定→中心にスナップして表示（任意）
+    # ...
+    if img_coords:
+        col, row, in_strike = point_to_5x5_cell(img_coords["x"], img_coords["y"], zone_bounds)
 
-    # 表示用のコース文字列
-    if st.session_state.last_coords:
-        pitch_course = f"X:{st.session_state.last_coords['x']}, Y:{st.session_state.last_coords['y']}"
+        # ★ 生のクリック座標でそのまま描画・保持
+        if img_coords != st.session_state.last_coords:
+            st.session_state.last_coords = img_coords
+            st.session_state.marked_img_bytes = compose_marked_image_png(base_img, img_coords)
+
+        zone_label = "ストライク" if in_strike else "ボール"
+        pitch_course = f"({col},{row}) {zone_label} / X:{img_coords['x']}, Y:{img_coords['y']}"
     else:
-        pitch_course = "未選択"
+        pitch_course = (
+            f"({point_to_5x5_cell(st.session_state.last_coords['x'], st.session_state.last_coords['y'], zone_bounds)[0]},"
+            f"{point_to_5x5_cell(st.session_state.last_coords['x'], st.session_state.last_coords['y'], zone_bounds)[1]})"
+            f" / X:{st.session_state.last_coords['x']}, Y:{st.session_state.last_coords['y']}"
+        ) if st.session_state.last_coords else "未選択"
    
 
 # 一球の共通入力（フォーム外。pitch_resultはここで選ぶ）
