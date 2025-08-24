@@ -1,6 +1,6 @@
 import streamlit as st
 from datetime import datetime
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageOps, ImageFont
 from streamlit_image_coordinates import streamlit_image_coordinates
 import os
 import uuid
@@ -9,12 +9,6 @@ import gspread
 import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
-
-from io import BytesIO
-
-TARGET_WIDTH = 300
-BACKGROUND_RGB = (255, 255, 255)   # ← 背景を白に。薄いグレーなら (245,245,245) など
-
 from io import BytesIO
 
 TARGET_WIDTH = 300  # 表示幅は固定に
@@ -24,7 +18,7 @@ PAD_RATIO = 0.1         # 画像の余白割合
 
 # 線画ベースを生成＆キャッシュ
 @st.cache_resource(show_spinner=False)
-def make_strike_zone_base(hand: str = "右", show_labels: bool = True):
+def make_strike_zone_base(hand: str = "右", show_labels: bool = True, _ver: int = 1):
     W = TARGET_WIDTH
     H = int(W * 1.1)  # 好みで縦横比
     PAD = int(W * PAD_RATIO)
@@ -369,7 +363,8 @@ st.header("4. 一球情報入力")
 if use_light_mode:
     st.markdown("### グリッドでコースを選択（5×5）")
     batter_side = st.session_state.atbat_info.get("batter_side", "右") if st.session_state.atbat_info else "右"
-    base_img, zone_bounds = make_strike_zone_base(batter_side)
+    #レイアウト変更路にコード中の_verを順に増やしていく
+    base_img, zone_bounds = make_strike_zone_base(batter_side, _ver=2)
 
     c1, c2 = st.columns(2)
     with c1:
@@ -392,7 +387,7 @@ else:
     batter_side = st.session_state.atbat_info.get("batter_side", "右") if st.session_state.atbat_info else "右"
 
     # 線画のベース画像＋境界（キャッシュ）
-    base_img, zone_bounds = make_strike_zone_base(batter_side)
+    base_img, zone_bounds = make_strike_zone_base(batter_side, _ver=2)
     img_w, img_h = base_img.size
     display_w = TARGET_WIDTH
     display_h = int(img_h * display_w / img_w)
