@@ -461,7 +461,7 @@ if atbat_result == "インプレー":
     st.markdown("**【インプレー詳細入力】**")
     batted_type = st.selectbox("打球の種類", ["フライ", "ゴロ", "ライナー"], key="inplay_result_select")
     batted_position = st.selectbox("打球方向", ["投手", "一塁", "二塁", "三塁", "遊撃", "左翼", "中堅", "右翼","左中","右中"], key="batted_pos_select")
-    batted_outcome = st.selectbox("結果", ["ヒット","２塁打","3塁打","ホームラン", "アウト", "エラー", "併殺", "犠打", "犠飛"], key="batted_out_select")
+    batted_outcome = st.selectbox("結果", ["ヒット","2塁打","3塁打","ホームラン", "アウト", "エラー", "併殺", "犠打", "犠飛"], key="batted_out_select")
 
 else:
     batted_type = ""
@@ -525,10 +525,13 @@ if st.session_state.pitches:
     st.subheader("📊 最近の投球記録（直近15件）")
     st.dataframe(st.session_state.pitches[-15:])
 
-# === スポナビ風の途中経過ビュー =========================================
-st.markdown("## 📰 試合経過")
 
-# ---- 0) 現状から “暫定” の状態を推定（B/S/O と直近ログ用） ----
+
+    
+# === スポナビ風の途中経過ビュー =========================================
+st.markdown("## 📰 試合経過（スポナビ風）")
+
+# ---- 0) B/S/Oの暫定推定（簡易） ----
 def summarize_state(pitches: list[dict]):
     balls = strikes = outs = 0
     last_5 = []
@@ -536,7 +539,6 @@ def summarize_state(pitches: list[dict]):
         pr = rec.get("pitch_result", "") or ""
         ar = rec.get("atbat_result", "") or ""
         bo = rec.get("batted_outcome", "") or ""
-
         inn = rec.get("inning", "?")
         tb  = rec.get("top_bottom", "?")
         batter  = rec.get("batter", "")
@@ -572,7 +574,7 @@ def summarize_state(pitches: list[dict]):
 
 state = summarize_state(st.session_state.pitches)
 
-# ---- 1) ヘッダー（スコアボード帯） ----
+# ---- 1) ヘッダー帯 ----
 game = st.session_state.game_info if st.session_state.game_info else {}
 inn  = st.session_state.inning_info if st.session_state.inning_info else {}
 t_top = game.get("top_team", "-")
@@ -627,7 +629,7 @@ def bso_lights(b, s, o) -> str:
         '</svg>'
     )
 
-# ランナーは打席情報フォームの値をそのまま表示（自動進塁は未実装）
+# ランナーは“打席情報フォーム”の値をそのまま表示（自動進塁は未実装）
 rinfo = st.session_state.atbat_info if st.session_state.atbat_info else {}
 r1 = bool(rinfo.get("runner_1b"))
 r2 = bool(rinfo.get("runner_2b"))
@@ -640,14 +642,12 @@ with colA:
     st.markdown("#### Bases")
     st.components.v1.html(bases_svg(r1, r2, r3), height=130)
 
-# ---- 3) 直近5「打席」：作戦+成否／ランナー状況／イニング見出し付き ----
+# ---- 3) 最終プレー：直近5「打席」を“短い結果表記”で、作戦/走者/イニング見出し付き ----
 def _join_nonempty(sep, *xs):
     return sep.join([x for x in xs if x])
 
 def _runner_label(rec: dict) -> str:
-    r1 = bool(rec.get("runner_1b"))
-    r2 = bool(rec.get("runner_2b"))
-    r3 = bool(rec.get("runner_3b"))
+    r1 = bool(rec.get("runner_1b")); r2 = bool(rec.get("runner_2b")); r3 = bool(rec.get("runner_3b"))
     if not (r1 or r2 or r3):
         return "走者なし"
     names = []
@@ -656,63 +656,53 @@ def _runner_label(rec: dict) -> str:
     if r3: names.append("三")
     return "走者:" + "".join(names) + "塁"
 
+# 結果フォーマッタ（例：左中2塁打／遊ゴロ／三振(空)／四球…）
+_ABBR_BATTED_TYPE = {"フライ": "飛", "ゴロ": "ゴロ", "ライナー": "直"}
+def format_play_result(rec: dict) -> str:
+    ar = (rec.get("atbat_result") or "").strip()
+    if not ar:
+        return rec.get("pitch_result", "") or "打席終了"
+    if ar != "インプレー":
+        return ar
+    pos  = (rec.get("batted_position") or "").strip()
+    btyp = (rec.get("batted_type") or "").strip()
+    outc = (rec.get("batted_outcome") or "").strip()
+    btyp_abbr = _ABBR_BATTED_TYPE.get(btyp, "")
+    if outc in ("ヒット", "２塁打", "3塁打", "ホームラン", "エラー"):
+        return f"{pos}{outc}"
+    if outc in ("犠打", "犠飛"):
+        return f"{pos}{outc}"
+    if outc == "併殺":
+        return f"{pos}{btyp_abbr}併殺" if btyp_abbr else f"{pos}併殺"
+    if outc == "アウト":
+        return f"{pos}{btyp_abbr}" if btyp_abbr else f"{pos}アウト"
+    return " ".join([x for x in (ar, btyp, pos, outc) if x])
+
 def last_5_atbats_grouped(pitches: list[dict]) -> list[tuple[str, str]]:
     """
     直近5打席を (見出し, 本文) の配列で返す。
-    見出し：'3回表' など（前件とイニングが変わる箇所だけ入る。変わらなければ空文字）
-    本文  ：'打者 vs 投手｜打席結果（インプレーは詳細付）｜作戦:◯（成否）｜走者:...'
+    見出し：'3回表' など（前件とイニングが変わる箇所だけ入る／同じなら空文字）
+    本文  ：'打者 vs 投手｜短い結果表記｜作戦:◯（成否）｜走者:...'
     ※ 新しい→古いの順で返す
     """
-    ab = [rec for rec in pitches if rec.get("pitch_result") == "打席終了"]
-    ab = ab[-5:]
-    result: list[tuple[str, str]] = []
+    ab = [rec for rec in pitches if rec.get("pitch_result") == "打席終了"][-5:]
     prev_inn = prev_tb = None
-
-    # 古い→新しいで処理し、最後に反転して最新→過去に
     tmp: list[tuple[str, str]] = []
     for rec in ab:
-        inn = rec.get("inning", "?")
-        tb  = rec.get("top_bottom", "?")
-        batter  = rec.get("batter", "")
-        pitcher = rec.get("pitcher", "")
-        ar = (rec.get("atbat_result") or "打席終了").strip()
-
-        if ar == "インプレー":
-            detail = _join_nonempty(
-                "/",
-                rec.get("batted_type", ""),
-                rec.get("batted_position", ""),
-                rec.get("batted_outcome", "")
-            )
-            ar_disp = _join_nonempty(" ", ar, detail)
-        else:
-            ar_disp = ar
-
+        inn = rec.get("inning", "?"); tb = rec.get("top_bottom", "?")
+        batter  = rec.get("batter", ""); pitcher = rec.get("pitcher", "")
+        play_disp = format_play_result(rec)
         strat = rec.get("strategy", "なし") or "なし"
-        strat_res = rec.get("strategy_result", "")
-        if strat != "なし":
-            strat_disp = f"作戦:{strat}" + (f"（{strat_res}）" if strat_res else "")
-        else:
-            strat_disp = ""
-
+        sres  = rec.get("strategy_result", "")
+        strat_disp = f"作戦:{strat}" + (f"（{sres}）" if strat != "なし" and sres else "") if strat != "なし" else ""
         runners = _runner_label(rec)
-
-        body = "｜".join([
-            f"{batter} vs {pitcher}",
-            ar_disp,
-            strat_disp if strat_disp else "",
-            runners
-        ]).replace("｜｜", "｜").strip("｜")
-
+        body = "｜".join([f"{batter} vs {pitcher}", play_disp, strat_disp if strat_disp else "", runners]).replace("｜｜", "｜").strip("｜")
         heading = ""
         if (inn, tb) != (prev_inn, prev_tb):
             heading = f"{inn}回{tb}"
             prev_inn, prev_tb = inn, tb
-
         tmp.append((heading, body))
-
-    result = list(reversed(tmp))
-    return result
+    return list(reversed(tmp))  # 最新→過去
 
 with colB:
     st.markdown("#### 最終プレー（直近5打席）")
@@ -727,16 +717,33 @@ with colB:
     else:
         st.caption("まだ打席結果がありません。")
 
-# ---- 4) イニング表（簡易ログ） ----
-with st.expander("🧾 イニングごとの記録（簡易ログ）", expanded=False):
-    if st.session_state.pitches:
-        df = pd.DataFrame(st.session_state.pitches)
-        cols = ["inning", "top_bottom", "batter", "pitch_result", "atbat_result", "batted_outcome", "strategy", "strategy_result"]
-        show = [c for c in cols if c in df.columns]
-        if show:
-            st.dataframe(df[show].tail(30), use_container_width=True)
-        else:
-            st.write("表示できる列がありません。")
-    else:
+# ---- 4) イニングごとの記録（短い結果表記で） ----
+with st.expander("🧾 イニングごとの記録（結果）", expanded=False):
+    ab = [rec for rec in st.session_state.pitches if rec.get("pitch_result") == "打席終了"]
+    if not ab:
         st.caption("記録がまだありません。")
+    else:
+        # イニング→表裏→時系列
+        def _sort_key(rec):
+            inn = int(rec.get("inning") or 0)
+            tb  = 0 if rec.get("top_bottom") == "表" else 1
+            return (inn, tb)
+        ab_sorted = sorted(ab, key=_sort_key)
+
+        current = (None, None)
+        for rec in ab_sorted:
+            inn  = rec.get("inning", "?")
+            tb   = rec.get("top_bottom", "?")
+            if (inn, tb) != current:
+                st.markdown(f"**— {inn}回{tb} —**")
+                current = (inn, tb)
+
+            batter  = rec.get("batter", "")
+            pitcher = rec.get("pitcher", "")
+            play    = format_play_result(rec)
+            strat   = rec.get("strategy", "なし") or "なし"
+            sres    = rec.get("strategy_result", "")
+            strat_disp = f"｜作戦:{strat}" + (f"（{sres}）" if strat != "なし" and sres else "") if strat != "なし" else ""
+            rlab = _runner_label(rec)
+            st.markdown(f"- {batter} vs {pitcher}｜{play}{strat_disp}｜{rlab}")
 # =======================================================================
