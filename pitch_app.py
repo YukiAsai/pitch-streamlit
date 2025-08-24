@@ -526,26 +526,30 @@ if st.session_state.pitches:
     st.dataframe(st.session_state.pitches[-15:])
 
 # === スポナビ風の途中経過ビュー =========================================
-st.markdown("## 📰 試合経過（スポナビ風）")
+st.markdown("## 📰 試合経過")
 
-# ---- 0) 現状から “暫定” の状態を推定（カウントとアウトだけ簡易計算） ----
+# ---- 0) 現状から “暫定” の状態を推定（B/S/Oと直近ログの簡易計算） ----
 def summarize_state(pitches: list[dict]):
     balls = strikes = outs = 0
     last_5 = []
     for rec in pitches:
-        pr = rec.get("pitch_result", "")
-        ar = rec.get("atbat_result", "")
-        bo = rec.get("batted_outcome", "")
+        pr = rec.get("pitch_result", "") or ""
+        ar = rec.get("atbat_result", "") or ""        # 無ければ空文字（互換）
+        bo = rec.get("batted_outcome", "") or ""
 
-        # プレイ文字列（簡易）
-        desc = f"{rec.get('inning','?')}回{rec.get('top_bottom','?')}｜{rec.get('batter','')} vs {rec.get('pitcher','')}｜{pr}"
+        # 直近プレーの表示用テキスト
+        inn = rec.get("inning", "?")
+        tb  = rec.get("top_bottom", "?")
+        batter = rec.get("batter", "")
+        pitcher = rec.get("pitcher", "")
+        desc = f"{inn}回{tb}｜{batter} vs {pitcher}｜{pr}"
         if ar:
             desc += f" → {ar}"
         if bo:
             desc += f"（{bo}）"
         last_5.append(desc)
 
-        # カウント（超簡易ロジック）
+        # カウント（簡易ルール）
         if pr.startswith("ボール"):
             balls = min(3, balls + 1)
         elif pr.startswith("ストライク"):
@@ -555,18 +559,15 @@ def summarize_state(pitches: list[dict]):
             if strikes < 2:
                 strikes += 1
 
-        # 打席終了でリセット＆アウト加算の簡易推定
+        # 打席終了時のアウト推定＆カウントリセット
         if pr == "打席終了":
-            # 三振
             if ar.startswith("三振"):
                 outs = min(3, outs + 1)
-            # インプレーのアウト系
             if ar == "インプレー":
                 if bo in ("アウト", "併殺", "犠打", "犠飛"):
                     outs = min(3, outs + (2 if bo == "併殺" else 1))
-            # 四死球・HITなどはアウト増えない想定
+            # 四球/死球/安打はアウト加算なし想定
 
-            # カウントは打席終了でクリア
             balls = 0
             strikes = 0
 
@@ -574,78 +575,79 @@ def summarize_state(pitches: list[dict]):
         "balls": balls,
         "strikes": strikes,
         "outs": outs,
-        "last_5": last_5[-5:]
+        "last_5": last_5[-5:],
     }
 
 state = summarize_state(st.session_state.pitches)
 
-# ---- 1) ヘッダー（スコアボードっぽい帯） ----
+# ---- 1) ヘッダー（スコアボード風帯） ----
 game = st.session_state.game_info if st.session_state.game_info else {}
 inn = st.session_state.inning_info if st.session_state.inning_info else {}
-t_top = game.get("top_team","-")
-t_bot = game.get("bottom_team","-")
+t_top = game.get("top_team", "-")
+t_bot = game.get("bottom_team", "-")
 inning_lab = f"{inn.get('inning','-')}回{inn.get('top_bottom','-')}" if inn else "-"
 
-scorebox = st.container()
-with scorebox:
-    c1,c2,c3 = st.columns([3,2,3])
-    with c1:
-        st.markdown(f"### {t_top}")
-    with c2:
-        st.markdown(f"#### {inning_lab}")
-    with c3:
-        st.markdown(f"### {t_bot}")
+hdr1, hdr2, hdr3 = st.columns([3, 2, 3])
+with hdr1:
+    st.markdown(f"### {t_top}")
+with hdr2:
+    st.markdown(f"#### {inning_lab}")
+with hdr3:
+    st.markdown(f"### {t_bot}")
 
-# ---- 2) B/S/O とベース（SVG描画） ----
-def bases_svg(r1: bool, r2: bool, r3: bool):
-    # ひし形ベースをSVGで。塁ごとに塗り分け
-    def base(x, y, filled):
-        color = "#2E7D32" if filled else "white"
-        return f'''
-        <polygon points="{x},{y-12} {x+12},{y} {x},{y+12} {x-12},{y}"
-                 fill="{color}" stroke="#111" stroke-width="2"/>'''
-    # 1塁(右),2塁(上),3塁(左)
-    return f"""
-    <svg width="160" height="120" viewBox="0 0 160 120">
-      <rect x="0" y="0" width="160" height="120" fill="transparent"/>
-      {base(110,60,{str(r1).lower()})}
-      {base(80,30,{str(r2).lower()})}
-      {base(50,60,{str(r3).lower()})}
-      {base(80,90,False)} <!-- 本塁（常に白） -->
-    </svg>
-    """
+# ---- 2) B/S/O と ベース（SVG） ----
+def bases_svg(r1: bool, r2: bool, r3: bool) -> str:
+    """ひし形の塁マーク。走者がいれば緑、なければ白。"""
+    def base(x, y, filled: bool) -> str:
+        color = "#2E7D32" if filled else "#FFFFFF"
+        return (
+            f'<polygon points="{x},{y-12} {x+12},{y} {x},{y+12} {x-12},{y}" '
+            f'fill="{color}" stroke="#111" stroke-width="2"/>'
+        )
 
-def bso_lights(b, s, o):
-    # 丸ランプ風
+    return (
+        '<svg width="160" height="120" viewBox="0 0 160 120">'
+        '<rect x="0" y="0" width="160" height="120" fill="transparent"/>'
+        f'{base(110, 60, r1)}'     # 一塁（右）
+        f'{base(80,  30, r2)}'     # 二塁（上）
+        f'{base(50,  60, r3)}'     # 三塁（左）
+        f'{base(80,  90, False)}'  # 本塁（常に白）
+        '</svg>'
+    )
+
+def bso_lights(b, s, o) -> str:
+    """B/S/O を丸ランプで表示"""
     def lamps(n, on, color):
         dots = []
         for i in range(n):
             fill = color if i < on else "#ddd"
             dots.append(f'<circle cx="{12+i*18}" cy="10" r="6" fill="{fill}" />')
         return "".join(dots)
-    return f"""
-    <svg width="200" height="40" viewBox="0 0 200 40">
-      <text x="0" y="15" font-size="12">B</text>
-      <g transform="translate(12,0)">{lamps(3, b, "#43A047")}</g>
-      <text x="72" y="15" font-size="12">S</text>
-      <g transform="translate(84,0)">{lamps(2, s, "#FB8C00")}</g>
-      <text x="132" y="15" font-size="12">O</text>
-      <g transform="translate(144,0)">{lamps(2, min(2,o), "#E53935")}</g>
-    </svg>
-    """
 
-# ランナーは「直近の打席情報の入力値」をそのまま表示（自動進塁までは未実装）
+    return (
+        '<svg width="200" height="40" viewBox="0 0 200 40">'
+        '<text x="0" y="15" font-size="12">B</text>'
+        '<g transform="translate(12,0)">' + lamps(3, b, "#43A047") + '</g>'
+        '<text x="72" y="15" font-size="12">S</text>'
+        '<g transform="translate(84,0)">' + lamps(2, s, "#FB8C00") + '</g>'
+        '<text x="132" y="15" font-size="12">O</text>'
+        '<g transform="translate(144,0)">' + lamps(2, min(2, o), "#E53935") + '</g>'
+        '</svg>'
+    )
+
+# ランナーは直近の打席情報フォームの値（自動進塁ロジックは未実装）
 rinfo = st.session_state.atbat_info if st.session_state.atbat_info else {}
 r1 = bool(rinfo.get("runner_1b"))
 r2 = bool(rinfo.get("runner_2b"))
 r3 = bool(rinfo.get("runner_3b"))
 
-colA, colB = st.columns([3,4])
+colA, colB = st.columns([3, 4])
 with colA:
     st.markdown("#### B / S / O")
     st.components.v1.html(bso_lights(state["balls"], state["strikes"], state["outs"]), height=45)
     st.markdown("#### Bases")
     st.components.v1.html(bases_svg(r1, r2, r3), height=130)
+
 with colB:
     st.markdown("#### 最終プレー（直近5件）")
     if state["last_5"]:
@@ -654,11 +656,11 @@ with colB:
     else:
         st.caption("まだプレーはありません。")
 
-# ---- 3) イニング表（簡易：保存済みレコードのイニングと結果を並べる） ----
+# ---- 3) イニング表（簡易ログ） ----
 with st.expander("🧾 イニングごとの記録（簡易ログ）", expanded=False):
     if st.session_state.pitches:
         df = pd.DataFrame(st.session_state.pitches)
-        cols = ["inning","top_bottom","batter","pitch_result","atbat_result","batted_outcome"]
+        cols = ["inning", "top_bottom", "batter", "pitch_result", "atbat_result", "batted_outcome"]
         show = [c for c in cols if c in df.columns]
         if show:
             st.dataframe(df[show].tail(30), use_container_width=True)
@@ -667,4 +669,3 @@ with st.expander("🧾 イニングごとの記録（簡易ログ）", expanded=
     else:
         st.caption("記録がまだありません。")
 # =======================================================================
-
