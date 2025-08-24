@@ -24,7 +24,7 @@ PAD_RATIO = 0.1         # 画像の余白割合
 
 # 線画ベースを生成＆キャッシュ
 @st.cache_resource(show_spinner=False)
-def make_strike_zone_base(hand: str = "右"):
+def make_strike_zone_base(hand: str = "右", show_labels: bool = True):
     W = TARGET_WIDTH
     H = int(W * 1.1)  # 好みで縦横比
     PAD = int(W * PAD_RATIO)
@@ -70,9 +70,27 @@ def make_strike_zone_base(hand: str = "右"):
     # 内側3x3の枠を強調
     draw.rectangle([core_left, core_top, core_right, core_bottom], outline=CORE_BORDER, width=2)
 
-    # 打者が左なら左右反転（好みで）
-    if hand == "左":
-        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+    # ラベル描画（英語固定: IN/OUT）
+    if show_labels:
+        try:
+            font = ImageFont.load_default()
+        except Exception:
+            font = None
+
+        if hand == "左":
+            label_left, label_right = "OUT", "IN"   # 左打者なら左右逆
+        else:
+            label_left, label_right = "IN", "OUT"   # 右打者なら通常
+
+        margin = int(min(cell_w, cell_h) * 0.15)
+        y_text = y_bot - margin - 10  # 下端から少し上に配置
+
+        # 左下
+        draw.text((x_left + margin, y_text), label_left, fill=(0, 0, 0), font=font)
+        # 右下
+        tw = draw.textlength(label_right, font=font) if hasattr(draw, "textlength") else len(label_right) * 6
+        draw.text((x_right - margin - tw, y_text), label_right, fill=(0, 0, 0), font=font)
+
 
     # 後で座標計算に使う境界を保存
     bounds = dict(
