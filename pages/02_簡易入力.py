@@ -84,7 +84,12 @@ def _gs_client():
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
     ]
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+    # 🔑 private_key の改行を復元
+    info = dict(st.secrets["gcp_service_account"])
+    if "private_key" in info:
+        info["private_key"] = info["private_key"].replace("\\n", "\n")
+
+    creds = Credentials.from_service_account_info(info, scopes=scope)
     return gspread.authorize(creds)
 
 def _open_spreadsheet():
