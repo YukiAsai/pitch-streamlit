@@ -235,7 +235,7 @@ base_img, zone_bounds = make_strike_zone_base()
 # スライダーでセルを選択
 c1, c2 = st.columns(2)
 with c1:
-    col = st.select_slider("横（1=内角〜5=外角）", options=[1,2,3,4,5], value=3, key="grid5_col")
+    col = st.select_slider("横(1=内角(右)),外角(左)〜5=外角(右）,内角(左))", options=[1,2,3,4,5], value=3, key="grid5_col")
 with c2:
     row = st.select_slider("縦（1=低め〜5=高め）", options=[1,2,3,4,5], value=3, key="grid5_row")
 
