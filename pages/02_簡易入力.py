@@ -310,31 +310,30 @@ if st.button("この一球を記録"):
 
         st.success("保存しました ✅")
 # ========= 7. 取消 =========
-st.header("7. 取消")
-with st.sidebar.expander("⏪ 入力取り消し", expanded=False):
-    n_to_undo = st.number_input("取り消す件数", min_value=1, max_value=10, value=1, step=1)
-    if st.button("選択件数を取り消す"):
-        n = int(min(n_to_undo, len(st.session_state.pitches), len(st.session_state.save_log)))
-        if n <= 0:
-            st.warning("取り消せる履歴がありません。")
-        else:
-            ok = 0
-            for _ in range(n):
-                log = st.session_state.save_log.pop()
-                sheet_name = log["sheet"]
-                row_id = log["row_id"]
+st.header("7. 入力取消")
+n_to_undo = st.number_input("取り消す件数", min_value=1, max_value=10, value=1, step=1)
+if st.button("選択件数を取り消す"):
+    n = int(min(n_to_undo, len(st.session_state.pitches), len(st.session_state.save_log)))
+    if n <= 0:
+        st.warning("取り消せる履歴がありません。")
+    else:
+        ok = 0
+        for _ in range(n):
+            log = st.session_state.save_log.pop()
+            sheet_name = log["sheet"]
+            row_id = log["row_id"]
 
-                # シートから該当レコード削除
-                if delete_row_by_id(sheet_name, row_id):
-                    ok += 1
+            # シートから該当レコード削除
+            if delete_row_by_id(sheet_name, row_id):
+                ok += 1
 
-                # ローカル履歴からも削除
-                for j in range(len(st.session_state.pitches) - 1, -1, -1):
-                    if st.session_state.pitches[j].get("row_id") == row_id:
-                        st.session_state.pitches.pop(j)
-                        break
-            st.success(f"{n}件取り消しました（シート側 {ok}/{n} 行削除）")
-            st.rerun()
+            # ローカル履歴からも削除
+            for j in range(len(st.session_state.pitches) - 1, -1, -1):
+                if st.session_state.pitches[j].get("row_id") == row_id:
+                    st.session_state.pitches.pop(j)
+                    break
+        st.success(f"{n}件取り消しました（シート側 {ok}/{n} 行削除）")
+        st.rerun()
 
 
 # ========= 最近の記録 =========
