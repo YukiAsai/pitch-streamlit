@@ -178,31 +178,6 @@ if st.sidebar.button("🔄 入力をリセット"):
     st.session_state.clear()
     st.rerun()
 
-with st.sidebar.expander("⏪ 入力取り消し（最大10件）", expanded=False):
-    n_to_undo = st.number_input("取り消す件数", min_value=1, max_value=10, value=1, step=1)
-    if st.button("選択件数を取り消す"):
-        n = int(min(n_to_undo, len(st.session_state.pitches), len(st.session_state.save_log)))
-        if n <= 0:
-            st.warning("取り消せる履歴がありません。")
-        else:
-            ok = 0
-            for _ in range(n):
-                log = st.session_state.save_log.pop()
-                sheet_name = log["sheet"]
-                row_id = log["row_id"]
-
-                # シートから該当レコード削除
-                if delete_row_by_id(sheet_name, row_id):
-                    ok += 1
-
-                # ローカル履歴からも削除
-                for j in range(len(st.session_state.pitches) - 1, -1, -1):
-                    if st.session_state.pitches[j].get("row_id") == row_id:
-                        st.session_state.pitches.pop(j)
-                        break
-            st.success(f"{n}件取り消しました（シート側 {ok}/{n} 行削除）")
-            st.rerun()
-
 # ========= 1. 試合情報 =========
 st.header("1. 試合情報")
 with st.form("game_form"):
@@ -236,6 +211,7 @@ with st.form("inning_form"):
         order_num = st.number_input("打順（1〜9）", min_value=1, max_value=9, step=1, value=1)
     with col4:
         batter_cycle = st.checkbox("打者一巡", value=False)  # ★ チェックボックス追加
+        st.caption("※ 同じ打順にその回２度目の打席が回ったらチェックしてください")
 
     if st.form_submit_button("イニング・打順を保存"):
         st.session_state.inning_info = {
@@ -264,8 +240,6 @@ with c2:
     row = st.select_slider("縦（1=低め〜5=高め）", options=[1,2,3,4,5], value=3, key="grid5_row")
 
 # セル中心にスナップして赤丸を描画
-# デバッグ: ベース線画だけを表示
-st.image(base_img, width=TARGET_WIDTH, caption="ベース線画（赤丸なし）")
 pt = center_of_cell(col, row, zone_bounds)
 canvas = base_img.copy()
 draw = ImageDraw.Draw(canvas)
@@ -282,12 +256,16 @@ st.caption(f"選択セル: ({col},{row}) → {zone_label}")
 
 # 記録時に使うため（あなたの保存ロジックが 'zone' を使う前提）
 # ここで変数 zone_label, col, row が定義されていればOK（保存処理側は変更不要）
+
 # ========= 4. 球種 =========
 st.header("4. 球種")
 pitch_type = st.selectbox("球種を選択", ["ストレート", "カーブ", "スライダー", "チェンジアップ", "フォーク", "ツーシーム","シュート","シンカー"])
 
-# ========= 5. 記録 =========
-st.header("5. 記録")
+# ========= 5. 球種 =========
+st.header("5. 作戦")
+strategy = st.selectbox("作戦", ["なし", "バント", "エンドラン", "スクイズ","盗塁","バスター"])
+# ========= 6. 記録 =========
+st.header("6. 記録")
 if st.button("この一球を記録"):
     if not st.session_state.get("game_info") or not st.session_state.get("inning_info"):
         st.error("先に試合情報とイニング・打順を保存してください。")
@@ -312,6 +290,8 @@ if st.button("この一球を記録"):
             "zone": zone_label,        # Strike/Ball のラベル
             # 球種
             "pitch_type": pitch_type,
+            # 作戦
+            "strategy": strategy,
         }
 
         # ローカル保存
@@ -324,11 +304,38 @@ if st.button("この一球を記録"):
             st.session_state.save_log = st.session_state.save_log[-100:]
 
         st.success("保存しました ✅")
+# ========= 7. 取消 =========
+st.header("7. 取消")
+with st.sidebar.expander("⏪ 入力取り消し", expanded=False):
+    n_to_undo = st.number_input("取り消す件数", min_value=1, max_value=10, value=1, step=1)
+    if st.button("選択件数を取り消す"):
+        n = int(min(n_to_undo, len(st.session_state.pitches), len(st.session_state.save_log)))
+        if n <= 0:
+            st.warning("取り消せる履歴がありません。")
+        else:
+            ok = 0
+            for _ in range(n):
+                log = st.session_state.save_log.pop()
+                sheet_name = log["sheet"]
+                row_id = log["row_id"]
+
+                # シートから該当レコード削除
+                if delete_row_by_id(sheet_name, row_id):
+                    ok += 1
+
+                # ローカル履歴からも削除
+                for j in range(len(st.session_state.pitches) - 1, -1, -1):
+                    if st.session_state.pitches[j].get("row_id") == row_id:
+                        st.session_state.pitches.pop(j)
+                        break
+            st.success(f"{n}件取り消しました（シート側 {ok}/{n} 行削除）")
+            st.rerun()
+
 
 # ========= 最近の記録 =========
 if st.session_state.pitches:
     st.subheader("📊 最近の記録（直近10件）")
-    cols = ["date","top_team","bottom_team","inning","top_bottom","order","grid_col","grid_row","zone","pitch_type"]
+    cols = ["inning","top_bottom","order","grid_col","grid_row","zone","pitch_type","strategy"]
     import pandas as pd
     df = pd.DataFrame(st.session_state.pitches)[cols]
     st.dataframe(df.tail(10), use_container_width=True)
