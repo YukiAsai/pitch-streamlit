@@ -237,6 +237,53 @@ def delete_row_by_id(sheet_name: str, row_id: str) -> bool:
             return True
     return False
 
+# ========= Sheets クライアント =========
+def _gs_client():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+    return gspread.authorize(creds)
+
+def load_game_sheet(sheet_name: str):
+    ss = _gs_client().open("Pitch_Data_2025")
+    ws = ss.worksheet(sheet_name)
+    rows = ws.get_all_records()
+    return pd.DataFrame(rows)
+
+def update_row_by_inning(sheet_name: str, inning: int, top_bottom: str, order: int, updates: dict):
+    ss = _gs_client().open("Pitch_Data_2025")
+    ws = ss.worksheet(sheet_name)
+    values = ws.get_all_values()
+    if not values:
+        return False
+    
+    header = values[0]
+    df = pd.DataFrame(values[1:], columns=header)
+
+    # 条件に一致する行を検索
+    cond = (
+        (df["inning"].astype(str) == str(inning)) &
+        (df["top_bottom"] == top_bottom) &
+        (df["order"].astype(str) == str(order))
+    )
+    match_idx = df[cond].index
+
+    if match_idx.empty:
+        return False  # 見つからない
+    
+    # Google Sheets 上の行番号（ヘッダー行を考慮して +2）
+    row_number = match_idx[0] + 2  
+
+    # 更新処理
+    for key, val in updates.items():
+        if key in header:
+            col_idx = header.index(key) + 1
+            ws.update_cell(row_number, col_idx, val)
+
+    return True
+
 st.set_page_config(page_title="一球データ入力アプリ", layout="wide")
 
 # ■■ セッション情報初期化 ■■
@@ -747,3 +794,37 @@ with st.expander("🧾 イニングごとの記録（結果）", expanded=False)
             rlab = _runner_label(rec)
             st.markdown(f"- {batter} vs {pitcher}｜{play}{strat_disp}｜{rlab}")
 # =======================================================================
+
+st.header("補足入力（試合後編集）")
+
+# 1. シート名を指定
+sheet_name = st.text_input("対象試合シート名を入力")
+
+if sheet_name:
+    df = load_game_sheet(sheet_name)
+    st.dataframe(df)
+
+    # 2. イニング・表裏・打順を指定
+    inning = st.number_input("イニング", min_value=1, step=1)
+    top_bottom = st.radio("表裏", ["表", "裏"], horizontal=True)
+    order = st.number_input("打順", min_value=1, max_value=9, step=1)
+
+    # 3. 補足フォーム
+    batter_name = st.text_input("打者名")
+    pitcher_name = st.text_input("投手名")
+    result = st.text_input("打席結果（例: 左中2塁打）")
+    runners = st.text_input("ランナー状況（例: 1,3塁）")
+
+    if st.button("この行を更新"):
+        updates = {
+            "batter_name": batter_name,
+            "pitcher_name": pitcher_name,
+            "result": result,
+            "runners": runners
+        }
+        ok = update_row_by_inning(sheet_name, inning, top_bottom, order, updates)
+        if ok:
+            st.success(f"{inning}回{top_bottom} {order}番 の行を更新しました！")
+        else:
+            st.error("一致する行が見つかりませんでした")
+            
