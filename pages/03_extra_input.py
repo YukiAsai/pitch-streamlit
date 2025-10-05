@@ -28,7 +28,7 @@ def load_game_sheet(sheet_name: str):
     return pd.DataFrame(rows)
 
 def update_row_by_index(sheet_name: str, row_index: int, updates: dict):
-    """DataFrame上の行番号に対応するスプレッドシート行を更新（不足列は自動追加）"""
+    """DataFrame上の行番号に対応するスプレッドシート行を更新"""
     ss = _gs_client().open(SPREADSHEET_NAME)
     ws = ss.worksheet(sheet_name)
     values = ws.get_all_values()
@@ -37,15 +37,6 @@ def update_row_by_index(sheet_name: str, row_index: int, updates: dict):
 
     header = values[0]
     row_number = row_index + 2  # header行を考慮
-
-    # 💡 不足列を自動追加
-    missing_cols = [k for k in updates.keys() if k not in header]
-    if missing_cols:
-        new_header = header + missing_cols
-        ws.update('1:1', [new_header])
-        header = new_header
-
-    # 対応するセルを更新
     for key, val in updates.items():
         if key in header:
             col_idx = header.index(key) + 1
@@ -111,23 +102,20 @@ if len(subset) == 0:
 
 # ⚾ 並び順を「古い順（上から順）」に固定
 subset = subset.reset_index()  # 元の行番号を保持
-subset_display = [
-    f"{i+1}球目: zone={row.get('zone','')} | pitch_type={row.get('pitch_type','')}"
-    for i, (_, row) in enumerate(subset.iterrows())
-]
 
 if "current_pitch_index" not in st.session_state:
     st.session_state.current_pitch_index = 0
 
-choice = st.selectbox(
-    "補足したい球を選択",
-    subset_display,
-    index=st.session_state.current_pitch_index
-)
+# 現在のインデックスの球を取得
+if st.session_state.current_pitch_index >= len(subset):
+    st.session_state.current_pitch_index = len(subset) - 1  # 保険
 
-row_index = subset.loc[subset_display.index(choice), "index"]
+current_pitch = subset.iloc[st.session_state.current_pitch_index]
+row_index = current_pitch["index"]
 target_row = df.loc[row_index]
-st.success(f"{inning}回{top_bottom} {order}番 の {choice} を編集中")
+
+current_label = f"{st.session_state.current_pitch_index + 1}球目: zone={current_pitch.get('zone','')} | pitch_type={current_pitch.get('pitch_type','')}"
+st.success(f"{inning}回{top_bottom} {order}番 の {current_label} を編集中")
 
 # 3️⃣ 補足情報の入力
 st.header("3. 補足情報入力（打席＋投球）")
@@ -138,11 +126,13 @@ colA, colB, colC, colD = st.columns(4)
 with colA:
     batter = st.text_input("打者名", value=target_row.get("batter", ""))
 with colB:
-    batter_side = st.selectbox("打者の利き腕", ["右", "左", "両"], index=0 if target_row.get("batter_side","右")=="右" else 1)
+    batter_side = st.selectbox("打者の利き腕", ["右", "左", "両"], 
+                               index=["右", "左", "両"].index(target_row.get("batter_side", "右")) if target_row.get("batter_side") in ["右", "左", "両"] else 0)
 with colC:
     pitcher = st.text_input("投手名", value=target_row.get("pitcher", ""))
 with colD:
-    pitcher_side = st.selectbox("投手の利き腕", ["右", "左"], index=0 if target_row.get("pitcher_side","右")=="右" else 1)
+    pitcher_side = st.selectbox("投手の利き腕", ["右", "左"], 
+                                index=["右", "左"].index(target_row.get("pitcher_side", "右")) if target_row.get("pitcher_side") in ["右", "左"] else 0)
 
 colE, colF, colG = st.columns(3)
 with colE:
@@ -181,7 +171,7 @@ else:
     batted_position = ""
     batted_outcome = ""
 
-# --- 保存＆自動遷移 ---
+# --- 保存＆次へ ---
 col_save, col_next = st.columns([2, 1])
 with col_save:
     if st.button("💾 この球を更新（次へ）"):
@@ -202,12 +192,21 @@ with col_save:
 
         ok = update_row_by_index(sheet_name, row_index, updates)
         if ok:
-            st.success(f"{inning}回{top_bottom} {order}番 の {choice} を更新しました！")
-            st.session_state.current_pitch_index += 1
-            if st.session_state.current_pitch_index >= len(subset_display):
-                # 次打席・次イニング・表裏処理
-                next_order = 1 if order == 9 else order + 1
-                next_inning, next_tb = inning, top_bottom
+            st.success(f"{inning}回{top_bottom} {order}番 の {st.session_state.current_pitch_index+1}球目 を更新しました！")
+
+            # 🔁 次の球へ進む処理
+            if st.session_state.current_pitch_index < len(subset) - 1:
+                st.session_state.current_pitch_index += 1
+                st.rerun()
+            else:
+                # 次打者 or 次イニング処理
+                current_order = order
+                current_tb = top_bottom
+                current_inning = inning
+
+                next_order = 1 if current_order == 9 else current_order + 1
+                next_tb = current_tb
+                next_inning = current_inning
 
                 df_next = df[
                     (df["inning"].astype(str) == str(next_inning)) &
@@ -215,13 +214,17 @@ with col_save:
                     (df["order"].astype(str) == str(next_order))
                 ]
 
-                if df_next.empty:
-                    if top_bottom == "表":
+                if not df_next.empty:
+                    st.session_state.current_pitch_index = 0
+                    st.success(f"{current_inning}回{current_tb} {current_order}番の最後の球です → 次打者（{next_order}番）へ移動します。")
+                    st.rerun()
+                else:
+                    if current_tb == "表":
                         next_tb = "裏"
-                        next_inning = inning
+                        next_inning = current_inning
                     else:
                         next_tb = "表"
-                        next_inning = inning + 1
+                        next_inning = current_inning + 1
 
                     df_next_tb = df[
                         (df["inning"].astype(str) == str(next_inning)) &
@@ -229,16 +232,11 @@ with col_save:
                         (df["order"].astype(str) == "1")
                     ]
 
-                    if df_next_tb.empty:
-                        st.info("🏁 試合終了です。すべての球を確認しました。")
-                        st.stop()
-                    else:
+                    if not df_next_tb.empty:
                         st.session_state.current_pitch_index = 0
-                        st.success(f"{next_inning}回{next_tb} 1番打者に移動します。")
+                        st.success(f"{current_inning}回{current_tb} の最後の打者でした → {next_inning}回{next_tb} 1番打者へ移動します。")
                         st.rerun()
-                else:
-                    st.session_state.current_pitch_index = 0
-                    st.success(f"次打者（{next_order}番）へ移動します。")
-                    st.rerun()
+                    else:
+                        st.info("試合終了です 🏁")
         else:
             st.error("更新に失敗しました。対象行が見つからない可能性があります。")
