@@ -146,14 +146,43 @@ st.info(f"{inning}回{top_bottom}　{order}番打者　（{st.session_state.curr
 
 # ===== 入力フォーム =====
 st.header("3. 補足情報を入力")
+# --- 打席情報 ---
+st.subheader("⚾ 打席情報")
 
-batter = st.text_input("打者名", value=target_row.get("batter", ""))
-batter_side = st.selectbox("打者の利き腕", ["右", "左", "両"], index=0)
-pitcher = st.text_input("投手名", value=target_row.get("pitcher", ""))
-pitcher_side = st.selectbox("投手の利き腕", ["右", "左"], index=0)
-runner_1b = st.text_input("一塁ランナー", value=target_row.get("runner_1b", ""))
-runner_2b = st.text_input("二塁ランナー", value=target_row.get("runner_2b", ""))
-runner_3b = st.text_input("三塁ランナー", value=target_row.get("runner_3b", ""))
+# 1行目：打者〜投手情報（4カラム）
+colA, colB, colC, colD = st.columns(4)
+with colA:
+    batter = st.text_input("打者名", value=target_row.get("batter", ""))
+with colB:
+    batter_side = st.selectbox(
+        "打者の利き腕",
+        ["右", "左", "両"],
+        index=["右", "左", "両"].index(target_row.get("batter_side", "右"))
+        if target_row.get("batter_side") in ["右", "左", "両"]
+        else 0,
+    )
+with colC:
+    pitcher = st.text_input("投手名", value=target_row.get("pitcher", ""))
+with colD:
+    pitcher_side = st.selectbox(
+        "投手の利き腕",
+        ["右", "左"],
+        index=["右", "左"].index(target_row.get("pitcher_side", "右"))
+        if target_row.get("pitcher_side") in ["右", "左"]
+        else 0,
+    )
+
+# 2行目：走者情報（3カラム）
+colE, colF, colG = st.columns(3)
+with colE:
+    runner_1b = st.text_input("一塁走者", value=target_row.get("runner_1b", ""))
+with colF:
+    runner_2b = st.text_input("二塁走者", value=target_row.get("runner_2b", ""))
+with colG:
+    runner_3b = st.text_input("三塁走者", value=target_row.get("runner_3b", ""))
+
+# --- 1球情報 ---
+st.subheader("⚾ 1球情報")
 
 pitch_result = st.selectbox(
     "球の結果",
