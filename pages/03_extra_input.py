@@ -199,8 +199,56 @@ with col_save:
 
 with col_next:
     if st.button("➡ 次の球へ"):
+        # まず同じ打席内で次の球があるか
         if st.session_state.current_pitch_index < len(subset_display) - 1:
             st.session_state.current_pitch_index += 1
             st.rerun()
         else:
-            st.info("最後の球まで到達しました。")
+            # 現在の打順と表裏・イニングを取得
+            current_order = order
+            current_tb = top_bottom
+            current_inning = inning
+
+            # 次の打順を計算（9の次は1）
+            next_order = 1 if current_order == 9 else current_order + 1
+
+            # 同じイニング・表裏で次打者を探す
+            df_next = df[
+                (df["inning"].astype(str) == str(current_inning)) &
+                (df["top_bottom"] == current_tb) &
+                (df["order"].astype(str) == str(next_order))
+            ]
+
+            if not df_next.empty:
+                st.session_state.current_pitch_index = 0
+                st.session_state["next_inning"] = current_inning
+                st.session_state["next_top_bottom"] = current_tb
+                st.session_state["next_order"] = next_order
+
+                st.success(f"{current_inning}回{current_tb} {current_order}番の最後の球です → 次打者（{next_order}番）へ移動します。")
+                st.rerun()
+            else:
+                # 同じイニングで次打者がいなければ、表裏を進める
+                if current_tb == "表":
+                    next_tb = "裏"
+                    next_inning = current_inning
+                else:
+                    next_tb = "表"
+                    next_inning = current_inning + 1
+
+                df_next_tb = df[
+                    (df["inning"].astype(str) == str(next_inning)) &
+                    (df["top_bottom"] == next_tb) &
+                    (df["order"].astype(str) == "1")
+                ]
+
+                if not df_next_tb.empty:
+                    st.session_state.current_pitch_index = 0
+                    st.session_state["next_inning"] = next_inning
+                    st.session_state["next_top_bottom"] = next_tb
+                    st.session_state["next_order"] = 1
+
+                    st.success(f"{current_inning}回{current_tb} の最後の打者でした → {next_inning}回{next_tb} 1番打者へ移動します。")
+                    st.rerun()
+                else:
+                    st.info("試合終了です 🏁")
