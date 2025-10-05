@@ -795,36 +795,112 @@ with st.expander("🧾 イニングごとの記録（結果）", expanded=False)
             st.markdown(f"- {batter} vs {pitcher}｜{play}{strat_disp}｜{rlab}")
 # =======================================================================
 
-st.header("補足入力（試合後編集）")
+# =======================================================================
+# === 補足入力（簡易入力との統合＋自動シート名生成） ==========================
+# =======================================================================
+st.header("補足入力（簡易入力データの後編集）")
 
-# 1. シート名を指定
-sheet_name = st.text_input("対象試合シート名を入力")
+# 1. 試合情報を入力（自動でシート名を生成）
+st.subheader("対象試合を指定")
 
-if sheet_name:
+colA, colB, colC = st.columns(3)
+with colA:
+    game_date = st.date_input("試合日")
+with colB:
+    top_team = st.text_input("先攻チーム名")
+with colC:
+    bottom_team = st.text_input("後攻チーム名")
+
+if game_date and top_team and bottom_team:
+    sheet_name = f"{game_date.strftime('%Y-%m-%d')}_{top_team.strip()}_vs_{bottom_team.strip()}"
+    st.info(f"対象シート名：**{sheet_name}**")
+else:
+    st.warning("試合日・先攻・後攻をすべて入力してください。")
+    st.stop()
+
+# 2. シートを読み込む
+try:
     df = load_game_sheet(sheet_name)
-    st.dataframe(df)
+except Exception as e:
+    st.error(f"スプレッドシートの読み込みに失敗しました: {e}")
+    st.stop()
 
-    # 2. イニング・表裏・打順を指定
-    inning = st.number_input("イニング", min_value=1, step=1)
-    top_bottom = st.radio("表裏", ["表", "裏"], horizontal=True)
-    order = st.number_input("打順", min_value=1, max_value=9, step=1)
+if df.empty:
+    st.warning("この試合シートにはまだデータがありません。")
+    st.stop()
 
-    # 3. 補足フォーム
-    batter_name = st.text_input("打者名")
-    pitcher_name = st.text_input("投手名")
-    result = st.text_input("打席結果（例: 左中2塁打）")
-    runners = st.text_input("ランナー状況（例: 1,3塁）")
+st.dataframe(df)
 
-    if st.button("この行を更新"):
-        updates = {
-            "batter_name": batter_name,
-            "pitcher_name": pitcher_name,
-            "result": result,
-            "runners": runners
-        }
-        ok = update_row_by_inning(sheet_name, inning, top_bottom, order, updates)
-        if ok:
-            st.success(f"{inning}回{top_bottom} {order}番 の行を更新しました！")
-        else:
-            st.error("一致する行が見つかりませんでした")
-            
+# 3. 編集対象を指定
+st.subheader("編集対象の指定")
+inning = st.number_input("イニング", min_value=1, step=1)
+top_bottom = st.radio("表裏", ["表", "裏"], horizontal=True)
+order = st.number_input("打順", min_value=1, max_value=9, step=1)
+
+# 4. 条件に一致する行を検索
+target = df[
+    (df["inning"].astype(str) == str(inning)) &
+    (df["top_bottom"] == top_bottom) &
+    (df["order"].astype(str) == str(order))
+]
+
+if len(target) == 0:
+    st.warning("一致する行が見つかりません。")
+    st.stop()
+elif len(target) > 1:
+    st.warning("該当する行が複数あります。row_idで区別が必要です。")
+    st.dataframe(target)
+    row_id = st.selectbox("更新したい行を選択（row_id）", target["row_id"].tolist())
+    target_row = target[target["row_id"] == row_id].iloc[0]
+else:
+    target_row = target.iloc[0]
+    row_id = target_row["row_id"]
+    st.success(f"{inning}回{top_bottom} {order}番 → row_id: {row_id}")
+
+# 5. 補足フォーム
+st.subheader("補足情報の入力")
+batter = st.text_input("打者名", value=target_row.get("batter", ""))
+batter_side = st.selectbox("打者の利き腕", ["右", "左", "両"], 
+                           index=["右", "左", "両"].index(target_row.get("batter_side", "右")) if "batter_side" in target_row else 0)
+pitcher = st.text_input("投手名", value=target_row.get("pitcher", ""))
+pitcher_side = st.selectbox("投手の利き腕", ["右", "左"],
+                            index=["右", "左"].index(target_row.get("pitcher_side", "右")) if "pitcher_side" in target_row else 0)
+runner_1b = st.text_input("一塁ランナー", value=target_row.get("runner_1b", ""))
+runner_2b = st.text_input("二塁ランナー", value=target_row.get("runner_2b", ""))
+runner_3b = st.text_input("三塁ランナー", value=target_row.get("runner_3b", ""))
+
+pitch_result = st.selectbox("結果（任意補足）", 
+                            ["", "ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル", "打席終了"],
+                            index=0)
+
+atbat_result = st.text_input("打席結果（例: 左中2塁打・三振など）", value=target_row.get("atbat_result", ""))
+batted_position = st.text_input("打球方向（例: 遊撃・中堅など）", value=target_row.get("batted_position", ""))
+batted_outcome = st.text_input("結果（例: ヒット・併殺など）", value=target_row.get("batted_outcome", ""))
+strategy = st.selectbox("作戦", ["なし", "バント", "エンドラン", "スクイズ", "盗塁", "バスター"],
+                        index=["なし", "バント", "エンドラン", "スクイズ", "盗塁", "バスター"].index(target_row.get("strategy", "なし")) if "strategy" in target_row else 0)
+strategy_result = st.selectbox("作戦結果", ["", "成", "否"], 
+                               index=["", "成", "否"].index(target_row.get("strategy_result", "")) if "strategy_result" in target_row else 0)
+
+# 6. 更新処理
+if st.button("この行を更新"):
+    updates = {
+        "batter": batter,
+        "batter_side": batter_side,
+        "pitcher": pitcher,
+        "pitcher_side": pitcher_side,
+        "runner_1b": runner_1b,
+        "runner_2b": runner_2b,
+        "runner_3b": runner_3b,
+        "pitch_result": pitch_result,
+        "atbat_result": atbat_result,
+        "batted_position": batted_position,
+        "batted_outcome": batted_outcome,
+        "strategy": strategy,
+        "strategy_result": strategy_result,
+    }
+
+    ok = update_row_by_id(sheet_name, row_id, updates)
+    if ok:
+        st.success(f"{inning}回{top_bottom} {order}番（row_id: {row_id[:8]}...）を更新しました！")
+    else:
+        st.error("更新に失敗しました。対象行が見つからない可能性があります。")
