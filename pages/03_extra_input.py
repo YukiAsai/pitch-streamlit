@@ -75,7 +75,6 @@ if df.empty:
     st.warning("この試合シートにはまだデータがありません。")
     st.stop()
 
-# 試合データ表示
 st.dataframe(df, use_container_width=True)
 
 # 2️⃣ 編集対象を指定
@@ -108,11 +107,9 @@ subset_display = [
     for i, (_, row) in enumerate(subset.iterrows())
 ]
 
-# セッションで現在の球を記憶
 if "current_pitch_index" not in st.session_state:
     st.session_state.current_pitch_index = 0
 
-# デフォルトで「現在の球」を選択（更新後も次へ進む）
 choice = st.selectbox(
     "補足したい球を選択",
     subset_display,
@@ -148,19 +145,34 @@ with colG:
 
 # --- 投球情報 ---
 st.subheader("🎯 投球情報")
+
 pitch_result = st.selectbox(
     "球の結果",
-    ["", "ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル", "打席終了"],
+    ["", "ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル", "牽制", "打席終了"],
     index=0
 )
-atbat_result = st.text_input("打席結果（例: 左中2塁打）", value=target_row.get("atbat_result", ""))
-batted_type = st.selectbox("打球種別", ["", "フライ", "ゴロ", "ライナー"], index=0)
-batted_position = st.selectbox("打球方向", ["", "投手", "一塁", "二塁", "三塁", "遊撃", "左翼", "中堅", "右翼", "左中", "右中"], index=0)
-batted_outcome = st.selectbox("打球結果", ["", "ヒット","2塁打","3塁打","ホームラン", "アウト", "エラー", "併殺", "犠打", "犠飛"], index=0)
-strategy = st.selectbox("作戦", ["なし", "バント", "エンドラン", "スクイズ","盗塁","バスター"], index=0)
-strategy_result = st.selectbox("作戦結果", ["", "成", "否"], index=0)
 
-# --- 保存 ---
+# 打席終了時のみ表示
+if pitch_result == "打席終了":
+    atbat_result = st.selectbox(
+        "打席結果",
+        ["", "三振(見)", "三振(空)", "四球", "死球", "インプレー", "その他"],
+        index=0
+    )
+else:
+    atbat_result = ""
+
+if atbat_result == "インプレー":
+    st.markdown("**【インプレー詳細入力】**")
+    batted_type = st.selectbox("打球の種類", ["フライ", "ゴロ", "ライナー"], index=0)
+    batted_position = st.selectbox("打球方向", ["投手", "一塁", "二塁", "三塁", "遊撃", "左翼", "中堅", "右翼", "左中", "右中"], index=0)
+    batted_outcome = st.selectbox("打球結果", ["ヒット", "2塁打", "3塁打", "ホームラン", "アウト", "エラー", "併殺", "犠打", "犠飛"], index=0)
+else:
+    batted_type = ""
+    batted_position = ""
+    batted_outcome = ""
+
+# --- 保存＆次へ ---
 col_save, col_next = st.columns([2, 1])
 with col_save:
     if st.button("💾 この球を更新"):
@@ -177,8 +189,6 @@ with col_save:
             "batted_type": batted_type,
             "batted_position": batted_position,
             "batted_outcome": batted_outcome,
-            "strategy": strategy,
-            "strategy_result": strategy_result,
         }
 
         ok = update_row_by_index(sheet_name, row_index, updates)
