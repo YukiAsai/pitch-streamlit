@@ -106,6 +106,10 @@ subset = subset.reset_index()  # 元の行番号を保持
 if "current_pitch_index" not in st.session_state:
     st.session_state.current_pitch_index = 0
 
+# --- 打席情報を保持するセッション ---
+if "atbat_info" not in st.session_state:
+    st.session_state.atbat_info = {}
+
 # 現在のインデックスの球を取得
 if st.session_state.current_pitch_index >= len(subset):
     st.session_state.current_pitch_index = len(subset) - 1  # 保険
@@ -123,24 +127,28 @@ st.header("3. 補足情報入力（打席＋投球）")
 # --- 打席情報 ---
 st.subheader("⚾ 打席情報")
 colA, colB, colC, colD = st.columns(4)
+
+# 現在の打席情報を初期値として設定
+atbat = st.session_state.atbat_info.get((inning, top_bottom, order), {})
+
 with colA:
-    batter = st.text_input("打者名", value=target_row.get("batter", ""))
+    batter = st.text_input("打者名", value=atbat.get("batter", target_row.get("batter", "")))
 with colB:
-    batter_side = st.selectbox("打者の利き腕", ["右", "左", "両"], 
-                               index=["右", "左", "両"].index(target_row.get("batter_side", "右")) if target_row.get("batter_side") in ["右", "左", "両"] else 0)
+    batter_side = st.selectbox("打者の利き腕", ["右", "左", "両"],
+                               index=["右", "左", "両"].index(atbat.get("batter_side", target_row.get("batter_side", "右"))) if atbat.get("batter_side", target_row.get("batter_side")) in ["右", "左", "両"] else 0)
 with colC:
-    pitcher = st.text_input("投手名", value=target_row.get("pitcher", ""))
+    pitcher = st.text_input("投手名", value=atbat.get("pitcher", target_row.get("pitcher", "")))
 with colD:
-    pitcher_side = st.selectbox("投手の利き腕", ["右", "左"], 
-                                index=["右", "左"].index(target_row.get("pitcher_side", "右")) if target_row.get("pitcher_side") in ["右", "左"] else 0)
+    pitcher_side = st.selectbox("投手の利き腕", ["右", "左"],
+                                index=["右", "左"].index(atbat.get("pitcher_side", target_row.get("pitcher_side", "右"))) if atbat.get("pitcher_side", target_row.get("pitcher_side")) in ["右", "左"] else 0)
 
 colE, colF, colG = st.columns(3)
 with colE:
-    runner_1b = st.text_input("一塁走者", value=target_row.get("runner_1b", ""))
+    runner_1b = st.text_input("一塁走者", value=atbat.get("runner_1b", target_row.get("runner_1b", "")))
 with colF:
-    runner_2b = st.text_input("二塁走者", value=target_row.get("runner_2b", ""))
+    runner_2b = st.text_input("二塁走者", value=atbat.get("runner_2b", target_row.get("runner_2b", "")))
 with colG:
-    runner_3b = st.text_input("三塁走者", value=target_row.get("runner_3b", ""))
+    runner_3b = st.text_input("三塁走者", value=atbat.get("runner_3b", target_row.get("runner_3b", "")))
 
 # --- 投球情報 ---
 st.subheader("🎯 投球情報")
@@ -192,6 +200,17 @@ with col_save:
 
         ok = update_row_by_index(sheet_name, row_index, updates)
         if ok:
+            # 現打席の打者情報をセッションに保存
+            st.session_state.atbat_info[(inning, top_bottom, order)] = {
+                "batter": batter,
+                "batter_side": batter_side,
+                "pitcher": pitcher,
+                "pitcher_side": pitcher_side,
+                "runner_1b": runner_1b,
+                "runner_2b": runner_2b,
+                "runner_3b": runner_3b,
+            }
+
             st.success(f"{inning}回{top_bottom} {order}番 の {st.session_state.current_pitch_index+1}球目 を更新しました！")
 
             # 🔁 次の球へ進む処理
@@ -199,7 +218,7 @@ with col_save:
                 st.session_state.current_pitch_index += 1
                 st.rerun()
             else:
-                # 次打者 or 次イニング処理
+                # 打席終了 → 次打者へ
                 current_order = order
                 current_tb = top_bottom
                 current_inning = inning
