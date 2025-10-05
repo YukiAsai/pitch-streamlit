@@ -58,10 +58,21 @@ st.header("1. 対象試合を特定")
 colA, colB, colC = st.columns(3)
 with colA:
     game_date = st.date_input("試合日")
+
+TEAM_LIST = [
+    "東京大学", "早稲田大学", "慶應義塾大学", "明治大学", "法政大学", "立教大学",
+    "その他"
+]
+
 with colB:
-    top_team = st.text_input("先攻チーム名")
+    top_team = st.selectbox("先攻チーム名", TEAM_LIST, index=0)
 with colC:
-    bottom_team = st.text_input("後攻チーム名")
+    bottom_team = st.selectbox("後攻チーム名", TEAM_LIST, index=1)
+# 「その他」選択時のみ自由入力欄を表示
+if top_team == "その他":
+    top_team = st.text_input("先攻チーム名を入力", key="top_team_other")
+if bottom_team == "その他":
+    bottom_team = st.text_input("後攻チーム名を入力", key="bottom_team_other")
 
 if game_date and top_team and bottom_team:
     sheet_name = f"{game_date.strftime('%Y-%m-%d')}_{top_team.strip()}_vs_{bottom_team.strip()}"

@@ -187,11 +187,22 @@ if st.sidebar.button("🔄 入力をリセット"):
 st.header("1. 試合情報")
 with st.form("game_form"):
     game_date = st.date_input("試合日", value=datetime.today())
+
+    TEAM_LIST = [
+    "東京", "早稲田", "慶應義塾", "明治", "法政", "立教",
+    "その他"
+    ]
+
     colA, colB = st.columns(2)
     with colA:
-        top_team = st.text_input("先攻チーム名")
+        top_team = st.selectbox("先攻チーム名", TEAM_LIST, index=0)
     with colB:
-        bottom_team = st.text_input("後攻チーム名")
+        bottom_team = st.selectbox("後攻チーム名", TEAM_LIST, index=1)
+    # 「その他」選択時のみ自由入力欄を表示
+    if top_team == "その他":
+        top_team = st.text_input("先攻チーム名を入力", key="top_team_other")
+    if bottom_team == "その他":
+        bottom_team = st.text_input("後攻チーム名を入力", key="bottom_team_other")
     if st.form_submit_button("試合情報を保存"):
         st.session_state.game_info = {
             "date": game_date.strftime("%Y-%m-%d"),
