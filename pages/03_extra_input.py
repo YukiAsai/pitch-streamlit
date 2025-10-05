@@ -63,7 +63,6 @@ TEAM_LIST = [
     "東京", "早稲田", "慶應", "明治", "法政", "立教",
     "その他"
 ]
-
 with colB:
     top_team = st.selectbox("先攻チーム名", TEAM_LIST, index=0)
 with colC:
