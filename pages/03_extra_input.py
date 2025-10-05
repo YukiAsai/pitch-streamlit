@@ -181,25 +181,64 @@ else:
     batted_position = ""
     batted_outcome = ""
 
-# --- 保存ボタン ---
-if st.button("💾 この球を更新"):
-    updates = {
-        "batter": batter,
-        "batter_side": batter_side,
-        "pitcher": pitcher,
-        "pitcher_side": pitcher_side,
-        "runner_1b": runner_1b,
-        "runner_2b": runner_2b,
-        "runner_3b": runner_3b,
-        "pitch_result": pitch_result,
-        "atbat_result": atbat_result,
-        "batted_type": batted_type,
-        "batted_position": batted_position,
-        "batted_outcome": batted_outcome,
-    }
+# --- 保存＆自動遷移 ---
+col_save, col_next = st.columns([2, 1])
+with col_save:
+    if st.button("💾 この球を更新（次へ）"):
+        updates = {
+            "batter": batter,
+            "batter_side": batter_side,
+            "pitcher": pitcher,
+            "pitcher_side": pitcher_side,
+            "runner_1b": runner_1b,
+            "runner_2b": runner_2b,
+            "runner_3b": runner_3b,
+            "pitch_result": pitch_result,
+            "atbat_result": atbat_result,
+            "batted_type": batted_type,
+            "batted_position": batted_position,
+            "batted_outcome": batted_outcome,
+        }
 
-    ok = update_row_by_index(sheet_name, row_index, updates)
-    if ok:
-        st.success(f"{inning}回{top_bottom} {order}番 の {choice} を更新しました！")
-    else:
-        st.error("更新に失敗しました。対象行が見つからない可能性があります。")
+        ok = update_row_by_index(sheet_name, row_index, updates)
+        if ok:
+            st.success(f"{inning}回{top_bottom} {order}番 の {choice} を更新しました！")
+            st.session_state.current_pitch_index += 1
+            if st.session_state.current_pitch_index >= len(subset_display):
+                # 次打席・次イニング・表裏処理
+                next_order = 1 if order == 9 else order + 1
+                next_inning, next_tb = inning, top_bottom
+
+                df_next = df[
+                    (df["inning"].astype(str) == str(next_inning)) &
+                    (df["top_bottom"] == next_tb) &
+                    (df["order"].astype(str) == str(next_order))
+                ]
+
+                if df_next.empty:
+                    if top_bottom == "表":
+                        next_tb = "裏"
+                        next_inning = inning
+                    else:
+                        next_tb = "表"
+                        next_inning = inning + 1
+
+                    df_next_tb = df[
+                        (df["inning"].astype(str) == str(next_inning)) &
+                        (df["top_bottom"] == next_tb) &
+                        (df["order"].astype(str) == "1")
+                    ]
+
+                    if df_next_tb.empty:
+                        st.info("🏁 試合終了です。すべての球を確認しました。")
+                        st.stop()
+                    else:
+                        st.session_state.current_pitch_index = 0
+                        st.success(f"{next_inning}回{next_tb} 1番打者に移動します。")
+                        st.rerun()
+                else:
+                    st.session_state.current_pitch_index = 0
+                    st.success(f"次打者（{next_order}番）へ移動します。")
+                    st.rerun()
+        else:
+            st.error("更新に失敗しました。対象行が見つからない可能性があります。")
