@@ -200,8 +200,8 @@ with col_save:
 
         ok = update_row_by_index(sheet_name, row_index, updates)
         if ok:
-            # 現打席の打者情報をセッションに保存
-            st.session_state.atbat_info[(inning, top_bottom, order)] = {
+            # 🔹打席情報をセッションに保持（次打席での初期値として使う）
+            st.session_state.atbat_info = {
                 "batter": batter,
                 "batter_side": batter_side,
                 "pitcher": pitcher,
@@ -213,31 +213,37 @@ with col_save:
 
             st.success(f"{inning}回{top_bottom} {order}番 の {st.session_state.current_pitch_index+1}球目 を更新しました！")
 
-            # 🔁 次の球へ進む処理
+            # ========== 遷移ロジック ==========
             if st.session_state.current_pitch_index < len(subset) - 1:
+                # 同じ打席内にまだ球がある
                 st.session_state.current_pitch_index += 1
                 st.rerun()
             else:
-                # 打席終了 → 次打者へ
-                current_order = order
-                current_tb = top_bottom
+                # 打席の最後の球
                 current_inning = inning
+                current_tb = top_bottom
+                current_order = order
 
+                # 次打者の番号（9→1へ）
                 next_order = 1 if current_order == 9 else current_order + 1
-                next_tb = current_tb
-                next_inning = current_inning
 
+                # 同じイニング・表裏・次打者を検索
                 df_next = df[
-                    (df["inning"].astype(str) == str(next_inning)) &
-                    (df["top_bottom"] == next_tb) &
+                    (df["inning"].astype(str) == str(current_inning)) &
+                    (df["top_bottom"] == current_tb) &
                     (df["order"].astype(str) == str(next_order))
                 ]
 
                 if not df_next.empty:
+                    # ✅ 次打者が同イニング・同表裏に存在
                     st.session_state.current_pitch_index = 0
-                    st.success(f"{current_inning}回{current_tb} {current_order}番の最後の球です → 次打者（{next_order}番）へ移動します。")
+                    st.session_state["inning"] = current_inning
+                    st.session_state["top_bottom"] = current_tb
+                    st.session_state["order"] = next_order
+                    st.success(f"{current_inning}回{current_tb} {current_order}番の最後の球 → 次打者（{next_order}番）へ移動します。")
                     st.rerun()
                 else:
+                    # ✅ 次の打者がいない → イニング切り替え
                     if current_tb == "表":
                         next_tb = "裏"
                         next_inning = current_inning
@@ -245,17 +251,22 @@ with col_save:
                         next_tb = "表"
                         next_inning = current_inning + 1
 
-                    df_next_tb = df[
+                    # 次イニング・1番打者を検索
+                    df_next_inning = df[
                         (df["inning"].astype(str) == str(next_inning)) &
                         (df["top_bottom"] == next_tb) &
                         (df["order"].astype(str) == "1")
                     ]
 
-                    if not df_next_tb.empty:
+                    if not df_next_inning.empty:
                         st.session_state.current_pitch_index = 0
+                        st.session_state["inning"] = next_inning
+                        st.session_state["top_bottom"] = next_tb
+                        st.session_state["order"] = 1
                         st.success(f"{current_inning}回{current_tb} の最後の打者でした → {next_inning}回{next_tb} 1番打者へ移動します。")
                         st.rerun()
                     else:
+                        # ✅ 試合終了
                         st.info("試合終了です 🏁")
         else:
             st.error("更新に失敗しました。対象行が見つからない可能性があります。")
