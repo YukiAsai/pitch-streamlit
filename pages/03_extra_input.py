@@ -43,6 +43,7 @@ def update_row_by_index(sheet_name: str, row_index: int, updates: dict):
             ws.update_cell(row_number, col_idx, val)
     return True
 
+
 # ========= Streamlit ページ設定 =========
 st.set_page_config(page_title="補足入力（試合後編集）", layout="wide")
 st.title("📘 補足入力モード（1球ごとの追記・修正）")
@@ -74,98 +75,118 @@ if df.empty:
     st.warning("この試合シートにはまだデータがありません。")
     st.stop()
 
-# 2️⃣ 編集対象を指定
+st.dataframe(df, use_container_width=True)
+
+# 2️⃣ 編集対象
 st.header("2. 編集対象（イニング・打順で絞り込み）")
 
+# --- セッション初期化 ---
+for key, default in {
+    "inning": 1, "top_bottom": "表", "order": 1,
+    "current_pitch_index": 0, "atbat_info": {}
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+# --- 入力欄（セッションにバインド） ---
 col1, col2, col3 = st.columns(3)
 with col1:
-    inning = st.number_input("イニング", min_value=1, step=1, key="inning_input")
+    st.session_state["inning"] = st.number_input(
+        "イニング", min_value=1, step=1, value=st.session_state["inning"]
+    )
 with col2:
-    top_bottom = st.radio("表裏", ["表", "裏"], horizontal=True, key="top_bottom_input")
+    st.session_state["top_bottom"] = st.radio(
+        "表裏", ["表", "裏"], horizontal=True,
+        index=0 if st.session_state["top_bottom"] == "表" else 1
+    )
 with col3:
-    order = st.number_input("打順", min_value=1, max_value=9, step=1, key="order_input")
+    st.session_state["order"] = st.number_input(
+        "打順", min_value=1, max_value=9, step=1, value=st.session_state["order"]
+    )
 
-# --- session state 初期化 ---
-if "current_pitch_index" not in st.session_state:
-    st.session_state.current_pitch_index = 0
-if "atbat_info" not in st.session_state:
-    st.session_state.atbat_info = {}
+inning = st.session_state["inning"]
+top_bottom = st.session_state["top_bottom"]
+order = st.session_state["order"]
 
-# 条件で絞り込み
+# --- 絞り込み ---
 cond = (
     (df["inning"].astype(str) == str(inning)) &
     (df["top_bottom"] == top_bottom) &
     (df["order"].astype(str) == str(order))
 )
-subset = df[cond].reset_index()
+subset = df[cond]
 
 if len(subset) == 0:
     st.warning("指定条件に一致する球が見つかりません。")
     st.stop()
 
-# 現在の球を特定
-current_pitch_index = st.session_state.current_pitch_index
+subset = subset.reset_index()
+current_pitch_index = st.session_state["current_pitch_index"]
 if current_pitch_index >= len(subset):
     current_pitch_index = len(subset) - 1
+    st.session_state["current_pitch_index"] = current_pitch_index
+
 current_pitch = subset.iloc[current_pitch_index]
 row_index = current_pitch["index"]
-target_row = df.loc[row_index]
+st.success(f"{inning}回{top_bottom} {order}番の {current_pitch_index+1}球目 を編集中")
 
-st.success(f"{inning}回{top_bottom} {order}番 の {current_pitch_index + 1}球目 (zone={current_pitch.get('zone','')}, pitch_type={current_pitch.get('pitch_type','')}) を編集中")
-
-# 3️⃣ 補足情報入力
+# 3️⃣ 補足情報
 st.header("3. 補足情報入力（打席＋投球）")
 
-# 打席情報
+# --- 打席情報 ---
 st.subheader("⚾ 打席情報")
 colA, colB, colC, colD = st.columns(4)
 with colA:
-    batter = st.text_input("打者名", value=st.session_state.atbat_info.get("batter", target_row.get("batter", "")))
+    batter = st.text_input("打者名", value=current_pitch.get("batter", st.session_state.atbat_info.get("batter", "")))
 with colB:
-    batter_side = st.selectbox("打者の利き腕", ["右", "左", "両"], index=["右", "左", "両"].index(st.session_state.atbat_info.get("batter_side", target_row.get("batter_side", "右"))))
+    batter_side = st.selectbox(
+        "打者の利き腕", ["右", "左", "両"],
+        index=["右", "左", "両"].index(current_pitch.get("batter_side", st.session_state.atbat_info.get("batter_side", "右")))
+    )
 with colC:
-    pitcher = st.text_input("投手名", value=st.session_state.atbat_info.get("pitcher", target_row.get("pitcher", "")))
+    pitcher = st.text_input("投手名", value=current_pitch.get("pitcher", st.session_state.atbat_info.get("pitcher", "")))
 with colD:
-    pitcher_side = st.selectbox("投手の利き腕", ["右", "左"], index=["右", "左"].index(st.session_state.atbat_info.get("pitcher_side", target_row.get("pitcher_side", "右"))))
+    pitcher_side = st.selectbox(
+        "投手の利き腕", ["右", "左"],
+        index=["右", "左"].index(current_pitch.get("pitcher_side", st.session_state.atbat_info.get("pitcher_side", "右")))
+    )
 
-# ランナー情報（有無）
+# --- ランナー情報（有無） ---
 st.subheader("🏃‍♂️ ランナー情報")
 colE, colF, colG = st.columns(3)
 with colE:
-    runner_1b = st.checkbox("一塁走者あり", value=st.session_state.atbat_info.get("runner_1b", False))
+    runner_1b = st.checkbox("一塁走者あり", value=bool(current_pitch.get("runner_1b", False)))
 with colF:
-    runner_2b = st.checkbox("二塁走者あり", value=st.session_state.atbat_info.get("runner_2b", False))
+    runner_2b = st.checkbox("二塁走者あり", value=bool(current_pitch.get("runner_2b", False)))
 with colG:
-    runner_3b = st.checkbox("三塁走者あり", value=st.session_state.atbat_info.get("runner_3b", False))
+    runner_3b = st.checkbox("三塁走者あり", value=bool(current_pitch.get("runner_3b", False)))
 
-# 投球情報
+# --- 投球情報 ---
 st.subheader("🎯 投球情報")
-pitch_result = st.selectbox("球の結果", ["", "ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル", "牽制", "打席終了"], index=0)
+pitch_result = st.selectbox(
+    "球の結果",
+    ["", "ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル", "牽制", "打席終了"],
+    index=0
+)
+atbat_result = ""
+batted_type = ""
+batted_position = ""
+batted_outcome = ""
+
 if pitch_result == "打席終了":
     atbat_result = st.selectbox("打席結果", ["", "三振(見)", "三振(空)", "四球", "死球", "インプレー", "その他"], index=0)
-else:
-    atbat_result = ""
+    if atbat_result == "インプレー":
+        st.markdown("**【インプレー詳細入力】**")
+        batted_type = st.selectbox("打球の種類", ["フライ", "ゴロ", "ライナー"], index=0)
+        batted_position = st.selectbox("打球方向", ["投手", "一塁", "二塁", "三塁", "遊撃", "左翼", "中堅", "右翼", "左中", "右中"], index=0)
+        batted_outcome = st.selectbox("打球結果", ["ヒット", "2塁打", "3塁打", "ホームラン", "アウト", "エラー", "併殺", "犠打", "犠飛"], index=0)
 
-if atbat_result == "インプレー":
-    st.markdown("**【インプレー詳細入力】**")
-    batted_type = st.selectbox("打球の種類", ["フライ", "ゴロ", "ライナー"], index=0)
-    batted_position = st.selectbox("打球方向", ["投手", "一塁", "二塁", "三塁", "遊撃", "左翼", "中堅", "右翼", "左中", "右中"], index=0)
-    batted_outcome = st.selectbox("打球結果", ["ヒット", "2塁打", "3塁打", "ホームラン", "アウト", "エラー", "併殺", "犠打", "犠飛"], index=0)
-else:
-    batted_type = ""
-    batted_position = ""
-    batted_outcome = ""
-
-# 保存・次へ
+# --- 保存ボタン ---
 if st.button("💾 この球を更新（次へ）"):
     updates = {
-        "batter": batter,
-        "batter_side": batter_side,
-        "pitcher": pitcher,
-        "pitcher_side": pitcher_side,
-        "runner_1b": runner_1b,
-        "runner_2b": runner_2b,
-        "runner_3b": runner_3b,
+        "batter": batter, "batter_side": batter_side,
+        "pitcher": pitcher, "pitcher_side": pitcher_side,
+        "runner_1b": runner_1b, "runner_2b": runner_2b, "runner_3b": runner_3b,
         "pitch_result": pitch_result,
         "atbat_result": atbat_result,
         "batted_type": batted_type,
@@ -173,26 +194,24 @@ if st.button("💾 この球を更新（次へ）"):
         "batted_outcome": batted_outcome,
     }
     ok = update_row_by_index(sheet_name, row_index, updates)
+
     if ok:
-        # 打席情報保持
-        st.session_state.atbat_info = {
-            "batter": batter,
-            "batter_side": batter_side,
-            "pitcher": pitcher,
-            "pitcher_side": pitcher_side,
-            "runner_1b": runner_1b,
-            "runner_2b": runner_2b,
-            "runner_3b": runner_3b,
+        st.session_state["atbat_info"] = {
+            "batter": batter, "batter_side": batter_side,
+            "pitcher": pitcher, "pitcher_side": pitcher_side,
+            "runner_1b": runner_1b, "runner_2b": runner_2b, "runner_3b": runner_3b
         }
 
-                # 次の球へ
-        if st.session_state.current_pitch_index < len(subset) - 1:
-            st.session_state.current_pitch_index += 1
+        # --- 次の球 or 打席へ進む ---
+        if current_pitch_index < len(subset) - 1:
+            st.session_state["current_pitch_index"] += 1
             st.rerun()
         else:
-            # 打席終了 → 次打者へ
-            current_inning, current_tb, current_order = inning, top_bottom, order
+            current_inning = inning
+            current_tb = top_bottom
+            current_order = order
             next_order = 1 if current_order == 9 else current_order + 1
+
             df_next = df[
                 (df["inning"].astype(str) == str(current_inning)) &
                 (df["top_bottom"] == current_tb) &
@@ -200,30 +219,26 @@ if st.button("💾 この球を更新（次へ）"):
             ]
 
             if not df_next.empty:
-                st.session_state.current_pitch_index = 0
-                st.session_state["inning_input"] = current_inning
-                st.session_state["top_bottom_input"] = current_tb
-                st.session_state["order_input"] = next_order
+                st.session_state.update({"inning": current_inning, "top_bottom": current_tb, "order": next_order, "current_pitch_index": 0})
                 st.success(f"{current_inning}回{current_tb} {current_order}番の最後の球 → 次打者（{next_order}番）へ移動します。")
                 st.rerun()
             else:
-                # 次イニングへ
-                next_tb = "裏" if current_tb == "表" else "表"
-                next_inning = current_inning + 1 if current_tb == "裏" else current_inning
+                if current_tb == "表":
+                    next_tb, next_inning = "裏", current_inning
+                else:
+                    next_tb, next_inning = "表", current_inning + 1
+
                 df_next_inning = df[
                     (df["inning"].astype(str) == str(next_inning)) &
                     (df["top_bottom"] == next_tb) &
                     (df["order"].astype(str) == "1")
                 ]
+
                 if not df_next_inning.empty:
-                    st.session_state.current_pitch_index = 0
-                    st.session_state["inning_input"] = next_inning
-                    st.session_state["top_bottom_input"] = next_tb
-                    st.session_state["order_input"] = 1
-                    st.success(f"{current_inning}回{current_tb}の最後の打者でした → {next_inning}回{next_tb} 1番打者へ移動します。")
+                    st.session_state.update({"inning": next_inning, "top_bottom": next_tb, "order": 1, "current_pitch_index": 0})
+                    st.success(f"{current_inning}回{current_tb} の最後の打者でした → {next_inning}回{next_tb} 1番打者へ移動します。")
                     st.rerun()
                 else:
                     st.info("試合終了です 🏁")
-                    st.stop()
     else:
-        st.error("更新に失敗しました。対象行が見つからない可能性があります。")s
+        st.error("更新に失敗しました。")
