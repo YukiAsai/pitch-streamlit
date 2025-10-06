@@ -1,244 +1,285 @@
+# pages/04_batch_counts.py
 import streamlit as st
 import pandas as pd
 import gspread
 import re
+import time
 from google.oauth2.service_account import Credentials
 
-# ========= Google Sheets 接続 =========
+# ==============================
+# Google Sheets 接続・共通関数
+# ==============================
 SPREADSHEET_NAME = "Pitch_Data_2025"
 
+@st.cache_resource(show_spinner=False)
 def _gs_client():
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
     ]
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=scope
+    )
     return gspread.authorize(creds)
 
+def _open_ss():
+    return _gs_client().open(SPREADSHEET_NAME)
+
+@st.cache_data(show_spinner=False, ttl=60)
 def list_game_sheets():
-    """日付(YYYY-MM-DD_)で始まるシートのみ取得"""
-    ss = _gs_client().open(SPREADSHEET_NAME)
-    sheet_titles = [ws.title for ws in ss.worksheets()]
-    return sorted([s for s in sheet_titles if re.match(r"^\d{4}-\d{2}-\d{2}_", s)])
+    """YYYY-MM-DD_ で始まるシートのみ。読み込みはキャッシュ（60秒）。"""
+    ss = _open_ss()
+    titles = [ws.title for ws in ss.worksheets()]
+    return sorted([t for t in titles if re.match(r"^\d{4}-\d{2}-\d{2}_", t)])
 
+@st.cache_data(show_spinner=False, ttl=60)
 def load_game_sheet(sheet_name: str):
-    ss = _gs_client().open(SPREADSHEET_NAME)
-    ws = ss.worksheet(sheet_name)
-    rows = ws.get_all_records()
-    return pd.DataFrame(rows)
-
-def update_row_by_index(sheet_name: str, row_index: int, updates: dict):
-    """DataFrame上の行番号に対応するスプレッドシート行を更新"""
-    ss = _gs_client().open(SPREADSHEET_NAME)
-    ws = ss.worksheet(sheet_name)
-    values = ws.get_all_values()
+    ws = _open_ss().worksheet(sheet_name)
+    values = ws.get_all_values()  # 1回で全取得（回数を抑える）
     if not values:
-        return False
-
+        return pd.DataFrame(), []
     header = values[0]
-    row_number = row_index + 2  # header行を考慮
-    for key, val in updates.items():
-        if key in header:
-            col_idx = header.index(key) + 1
-            ws.update_cell(row_number, col_idx, val)
-    return True
+    rows = values[1:]
+    df = pd.DataFrame(rows, columns=header)
+    return df, header
 
+def ensure_columns(ws, header: list, need_cols: list) -> list:
+    """必要列が無ければヘッダーに追加して1行目を更新。戻り値は更新後ヘッダー。"""
+    missing = [c for c in need_cols if c not in header]
+    if not missing:
+        return header
+    new_header = header + missing
+    ws.update('1:1', [new_header])   # 1行目を置換
+    return new_header
 
-# ========= Streamlit ページ設定 =========
-st.set_page_config(page_title="補足入力（試合後編集）", layout="wide")
-st.title("📘 補足入力モード（1球ごとの追記・修正）")
+def col_letter(idx_1based: int) -> str:
+    """1→A, 2→B ..."""
+    s = ""
+    n = idx_1based
+    while n:
+        n, r = divmod(n-1, 26)
+        s = chr(65+r) + s
+    return s
 
-# 1️⃣ 試合シートの選択
-st.header("1. 試合選択")
+def batch_update_rows(ws, header: list, row_updates: list[dict]):
+    """
+    row_updates = [
+      {"row": 12, "values": {"strike_count": 1, "ball_count": 2, "pitch_in_atbat": 3}},
+      ...
+    ]
+    を、batch_updateでまとめて反映。
+    """
+    # まとめてレンジを作る
+    requests = []
+    for item in row_updates:
+        row_no = int(item["row"])          # 1-based（ヘッダー行含む）
+        vals  = item["values"]             # dict
+        # 対象キーだけ抜き出し（列順不問）
+        keys = list(vals.keys())
+        # 左端・右端の列番号を求める（離散更新を避けるため横並びの最小〜最大にまとめる）
+        col_indices = [header.index(k)+1 for k in keys if k in header]
+        if not col_indices:
+            continue
+        left = min(col_indices)
+        right = max(col_indices)
+        # その範囲分の配列を組む（欠け列には既存値を触らずに置換しないよう、本当は列ごと指定が望ましい）
+        # ここでは「キーがある列にだけ値を入れ、その他はセルをそのまま」にしたいので、
+        # 列ごとの個別レンジ更新に切り替える（安全優先）
+        for k in keys:
+            c = header.index(k) + 1
+            rng = f"{col_letter(c)}{row_no}:{col_letter(c)}{row_no}"
+            requests.append({
+                "range": rng,
+                "values": [[str(vals[k])]],
+            })
 
-try:
-    game_sheets = list_game_sheets()
-except Exception as e:
-    st.error(f"スプレッドシートの取得に失敗しました: {e}")
-    st.stop()
+    # 100 件ごとに分割して送信（429対策）
+    for i in range(0, len(requests), 100):
+        chunk = requests[i:i+100]
+        ws.batch_update(chunk)
+        # 速連打を少し緩和
+        time.sleep(0.2)
 
-if not game_sheets:
-    st.warning("日付形式（YYYY-MM-DD_）のシートが見つかりません。")
-    st.stop()
+# ==============================
+# カウント計算（打席単位）
+# ==============================
+def count_before_pitch(pitch_result: str, strikes: int, balls: int):
+    """
+    “その球以前”のカウント値として (strikes, balls) を返す。
+    戻り値は現在の値（記録用）。その後で内部で次の値に進める。
+    """
+    return strikes, balls
 
-sheet_name = st.selectbox("試合シートを選択", game_sheets)
-if not sheet_name:
-    st.stop()
+def advance_count_after_pitch(pitch_result: str, strikes: int, balls: int):
+    """この球の結果を反映してカウントを進める（上限 S:2, B:3 ルール込み）"""
+    pr = (pitch_result or "").strip()
+    if pr in ("ストライク（見逃し）", "ストライク（空振り）"):
+        strikes = min(2, strikes + 1)
+    elif pr == "ファウル":
+        if strikes < 2:
+            strikes += 1
+    elif pr == "ボール":
+        balls = min(3, balls + 1)
+    # 牽制・その他はカウント変化なし
+    return strikes, balls
 
-try:
-    df = load_game_sheet(sheet_name)
-except Exception as e:
-    st.error(f"スプレッドシートの読み込みに失敗しました: {e}")
-    st.stop()
+def compute_counts_for_inning(df: pd.DataFrame, inning: int, top_bottom: str):
+    """
+    指定イニングの全打席（orderごと）について、
+    「その球以前」の strike_count / ball_count と 何球目 pitch_in_atbat を計算して
+    {row_index_in_df: {col: val, ...}} を返す。
+    """
+    # 前処理：数値列を安全にキャスト
+    dff = df.copy()
+    # 入力のバラツキに備えて文字列→数値を吸収
+    for col in ("inning", "order"):
+        if col in dff.columns:
+            dff[col] = pd.to_numeric(dff[col], errors="coerce")
 
-if df.empty:
-    st.warning("この試合シートにはまだデータがありません。")
-    st.stop()
-
-st.dataframe(df, use_container_width=True)
-
-# 2️⃣ 編集対象
-st.header("2. 編集対象（イニング・打順で絞り込み）")
-
-# --- セッション初期化 ---
-for key, default in {
-    "inning": 1, "top_bottom": "表", "order": 1,
-    "current_pitch_index": 0, "atbat_info": {}
-}.items():
-    if key not in st.session_state:
-        st.session_state[key] = default
-
-# --- 入力欄（セッションにバインド） ---
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.session_state["inning"] = st.number_input(
-        "イニング", min_value=1, step=1, value=st.session_state["inning"]
+    # このイニングの該当データ
+    cond = (
+        (dff.get("inning").astype("Int64") == int(inning)) &
+        (dff.get("top_bottom") == top_bottom)
     )
-with col2:
-    st.session_state["top_bottom"] = st.radio(
-        "表裏", ["表", "裏"], horizontal=True,
-        index=0 if st.session_state["top_bottom"] == "表" else 1
-    )
-with col3:
-    st.session_state["order"] = st.number_input(
-        "打順", min_value=1, max_value=9, step=1, value=st.session_state["order"]
-    )
+    sub = dff[cond].copy()
+    # 同打席内の並び順は“シート上の登場順”＝元の行順のまま
+    sub = sub.reset_index()   # index列に “元のdf行番号” が入る
 
-inning = st.session_state["inning"]
-top_bottom = st.session_state["top_bottom"]
-order = st.session_state["order"]
+    result_map = {}  # df_row -> {col: val}
 
-# --- 絞り込み ---
-cond = (
-    (df["inning"].astype(str) == str(inning)) &
-    (df["top_bottom"] == top_bottom) &
-    (df["order"].astype(str) == str(order))
-)
-subset = df[cond]
+    # 打順ごと（=打席ごと）にグループ化
+    if "order" not in sub.columns:
+        return result_map  # 欠損時は何もしない
 
-if len(subset) == 0:
-    st.warning("指定条件に一致する球が見つかりません。")
-    st.stop()
+    for order_val, g in sub.groupby("order", dropna=True):
+        # カウント初期化
+        s_count, b_count = 0, 0
+        # 打席内で上から順に（=古い順）
+        for i, row in g.iterrows():
+            df_row = int(row["index"])  # 元dfの行番号
+            pr = row.get("pitch_result", "")
 
-subset = subset.reset_index()
-current_pitch_index = st.session_state["current_pitch_index"]
-if current_pitch_index >= len(subset):
-    current_pitch_index = len(subset) - 1
-    st.session_state["current_pitch_index"] = current_pitch_index
+            # 記録するのは “この球の直前” のカウント
+            rec_s, rec_b = count_before_pitch(pr, s_count, b_count)
 
-current_pitch = subset.iloc[current_pitch_index]
-row_index = current_pitch["index"]
-st.success(f"{inning}回{top_bottom} {order}番の {current_pitch_index+1}球目 を編集中")
+            # 何球目（1始まり）
+            pitch_idx = i - g.index.min() + 1  # i は sub.reset_index()後の連番なので基準をグループ先頭に
 
-# 3️⃣ 補足情報
-st.header("3. 補足情報入力（打席＋投球）")
+            result_map[df_row] = {
+                "strike_count": str(rec_s),
+                "ball_count": str(rec_b),
+                "pitch_in_atbat": str(pitch_idx),
+            }
 
-# --- 打席情報 ---
-st.subheader("⚾ 打席情報")
-colA, colB, colC, colD = st.columns(4)
-with colA:
-    batter = st.text_input("打者名", value=current_pitch.get("batter", st.session_state.atbat_info.get("batter", "")))
-with colB:
-    batter_side = st.selectbox(
-        "打者の利き腕", ["右", "左", "両"],
-        index=["右", "左", "両"].index(current_pitch.get("batter_side", st.session_state.atbat_info.get("batter_side", "右")))
-    )
-with colC:
-    pitcher = st.text_input("投手名", value=current_pitch.get("pitcher", st.session_state.atbat_info.get("pitcher", "")))
-with colD:
-    pitcher_side = st.selectbox(
-        "投手の利き腕", ["右", "左"],
-        index=["右", "左"].index(current_pitch.get("pitcher_side", st.session_state.atbat_info.get("pitcher_side", "右")))
-    )
+            # 次の球に向けてカウントを進める
+            s_count, b_count = advance_count_after_pitch(pr, s_count, b_count)
 
-# --- ランナー情報（有無） ---
-st.subheader("🏃‍♂️ ランナー情報")
-colE, colF, colG = st.columns(3)
-with colE:
-    runner_1b = st.checkbox("一塁走者あり", value=bool(current_pitch.get("runner_1b", False)))
-with colF:
-    runner_2b = st.checkbox("二塁走者あり", value=bool(current_pitch.get("runner_2b", False)))
-with colG:
-    runner_3b = st.checkbox("三塁走者あり", value=bool(current_pitch.get("runner_3b", False)))
+    return result_map
 
-# --- 投球情報 ---
-st.subheader("🎯 投球情報")
-pitch_result = st.selectbox(
-    "球の結果",
-    ["", "ストライク（見逃し）", "ストライク（空振り）", "ボール", "ファウル", "牽制", "打席終了"],
-    index=0
-)
-atbat_result = ""
-batted_type = ""
-batted_position = ""
-batted_outcome = ""
+# ==============================
+# Streamlit UI
+# ==============================
+st.set_page_config(page_title="補足入力：自動カウント付与（イニング保存）", layout="wide")
+st.title("📘 補足入力：自動カウント付与（イニング単位で一括保存）")
 
-if pitch_result == "打席終了":
-    atbat_result = st.selectbox("打席結果", ["", "三振(見)", "三振(空)", "四球", "死球", "インプレー", "その他"], index=0)
-    if atbat_result == "インプレー":
-        st.markdown("**【インプレー詳細入力】**")
-        batted_type = st.selectbox("打球の種類", ["フライ", "ゴロ", "ライナー"], index=0)
-        batted_position = st.selectbox("打球方向", ["投手", "一塁", "二塁", "三塁", "遊撃", "左翼", "中堅", "右翼", "左中", "右中"], index=0)
-        batted_outcome = st.selectbox("打球結果", ["ヒット", "2塁打", "3塁打", "ホームラン", "アウト", "エラー", "併殺", "犠打", "犠飛"], index=0)
+# 1) 試合シート選択
+with st.container():
+    st.subheader("1. 試合シートを選択")
+    try:
+        sheets = list_game_sheets()
+    except Exception as e:
+        st.error(f"シート一覧の取得に失敗しました: {e}")
+        st.stop()
 
-# --- 保存ボタン ---
-if st.button("💾 この球を更新（次へ）"):
-    updates = {
-        "batter": batter, "batter_side": batter_side,
-        "pitcher": pitcher, "pitcher_side": pitcher_side,
-        "runner_1b": runner_1b, "runner_2b": runner_2b, "runner_3b": runner_3b,
-        "pitch_result": pitch_result,
-        "atbat_result": atbat_result,
-        "batted_type": batted_type,
-        "batted_position": batted_position,
-        "batted_outcome": batted_outcome,
-    }
-    ok = update_row_by_index(sheet_name, row_index, updates)
+    if not sheets:
+        st.warning("YYYY-MM-DD_ で始まるシートが見つかりません。")
+        st.stop()
 
-    if ok:
-        st.session_state["atbat_info"] = {
-            "batter": batter, "batter_side": batter_side,
-            "pitcher": pitcher, "pitcher_side": pitcher_side,
-            "runner_1b": runner_1b, "runner_2b": runner_2b, "runner_3b": runner_3b
-        }
+    sheet_name = st.selectbox("試合シート", sheets)
 
-        # --- 次の球 or 打席へ進む ---
-        if current_pitch_index < len(subset) - 1:
-            st.session_state["current_pitch_index"] += 1
-            st.rerun()
-        else:
-            current_inning = inning
-            current_tb = top_bottom
-            current_order = order
-            next_order = 1 if current_order == 9 else current_order + 1
+# 2) イニング指定 & データ読込（キャッシュ）
+with st.container():
+    st.subheader("2. 対象イニングを指定")
+    col1, col2 = st.columns(2)
+    with col1:
+        inning = st.number_input("イニング", min_value=1, step=1, value=1)
+    with col2:
+        top_bottom = st.radio("表裏", ["表", "裏"], horizontal=True, index=0)
 
-            df_next = df[
-                (df["inning"].astype(str) == str(current_inning)) &
-                (df["top_bottom"] == current_tb) &
-                (df["order"].astype(str) == str(next_order))
-            ]
+    # 読み込み
+    try:
+        df, header = load_game_sheet(sheet_name)
+    except Exception as e:
+        st.error(f"スプレッドシートの読み込みに失敗しました: {e}")
+        st.stop()
 
-            if not df_next.empty:
-                st.session_state.update({"inning": current_inning, "top_bottom": current_tb, "order": next_order, "current_pitch_index": 0})
-                st.success(f"{current_inning}回{current_tb} {current_order}番の最後の球 → 次打者（{next_order}番）へ移動します。")
-                st.rerun()
-            else:
-                if current_tb == "表":
-                    next_tb, next_inning = "裏", current_inning
-                else:
-                    next_tb, next_inning = "表", current_inning + 1
+    if df.empty:
+        st.warning("この試合シートにはまだデータがありません。")
+        st.stop()
 
-                df_next_inning = df[
-                    (df["inning"].astype(str) == str(next_inning)) &
-                    (df["top_bottom"] == next_tb) &
-                    (df["order"].astype(str) == "1")
-                ]
+    st.caption(f"読み込んだ行数: {len(df)}")
 
-                if not df_next_inning.empty:
-                    st.session_state.update({"inning": next_inning, "top_bottom": next_tb, "order": 1, "current_pitch_index": 0})
-                    st.success(f"{current_inning}回{current_tb} の最後の打者でした → {next_inning}回{next_tb} 1番打者へ移動します。")
-                    st.rerun()
-                else:
-                    st.info("試合終了です 🏁")
+# 3) 計算プレビュー & 保存
+with st.container():
+    st.subheader("3. 自動カウントを計算 → 保存")
+    st.markdown("- Strike/ball は **その球の直前** のカウントを記録します。")
+    st.markdown("- 保存は **このイニング（指定の表/裏）に属する全打席** に対して行われます。")
+
+    # 計算
+    result_map = compute_counts_for_inning(df, inning=inning, top_bottom=top_bottom)
+
+    # プレビュー（先頭10行だけ）
+    if result_map:
+        preview_rows = []
+        for df_row, vals in result_map.items():
+            r = df.loc[df_row]
+            preview_rows.append({
+                "df_row": df_row+2,  # 表示用（シート上の行番号を意識）
+                "inning": r.get("inning", ""),
+                "top_bottom": r.get("top_bottom", ""),
+                "order": r.get("order", ""),
+                "pitch_result": r.get("pitch_result", ""),
+                **vals
+            })
+        st.dataframe(pd.DataFrame(preview_rows).head(10), use_container_width=True)
     else:
-        st.error("更新に失敗しました。")
+        st.info("このイニング・表裏に該当するデータが見つかりませんでした。")
+
+    # 保存ボタン（rerunに頼らず、その場で一括保存）
+    if st.button("💾 このイニングのカウントを一括保存", use_container_width=True, type="primary", help="429対策としてバッチ更新で書き込みます"):
+        try:
+            ss = _open_ss()
+            ws = ss.worksheet(sheet_name)
+
+            # 必要列を確保（無ければヘッダーに追加）
+            header = ensure_columns(ws, header, ["strike_count", "ball_count", "pitch_in_atbat"])
+
+            # 反映対象を組み立て
+            updates = []
+            for df_row, vals in result_map.items():
+                # df_row は 0-based。シートはヘッダ行があるので +2
+                row_no = int(df_row) + 2
+                updates.append({"row": row_no, "values": vals})
+
+            if not updates:
+                st.info("更新対象がありませんでした。")
+            else:
+                batch_update_rows(ws, header, updates)
+                st.success(f"{inning}回{top_bottom} の {len(updates)} 行にカウントを保存しました ✅")
+
+                # 読み込みキャッシュを明示的にクリア（画面はrerunしない）
+                load_game_sheet.clear()   # type: ignore[attr-defined]
+        except gspread.exceptions.APIError as e:
+            st.error(f"APIError: {e}")
+        except Exception as e:
+            st.error(f"保存時にエラーが発生しました: {e}")
+
+# 4) 任意：対象イニングの抽出を表示（確認用・負荷軽め）
+with st.expander("対象イニングの生データ（確認用）", expanded=False):
+    try:
+        dff = df.copy()
+        dff["inning"] = pd.to_numeric(dff.get("inning"), errors="coerce")
+        show = dff[(dff["inning"] == int(inning)) & (dff["top_bottom"] == top_bottom)]
+        st.dataframe(show, use_container_width=True, height=300)
+    except Exception:
+        st.dataframe(df.head(50), use_container_width=True, height=300)
