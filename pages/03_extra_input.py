@@ -99,7 +99,7 @@ st.dataframe(df, use_container_width=True)
 # 2️⃣ 編集対象を指定
 st.header("2. 編集対象（イニング・打順で絞り込み）")
 
-# --- セッションで状態を保持 ---
+# --- セッション保持 ---
 if "inning" not in st.session_state:
     st.session_state["inning"] = 1
 if "top_bottom" not in st.session_state:
@@ -107,6 +107,7 @@ if "top_bottom" not in st.session_state:
 if "order" not in st.session_state:
     st.session_state["order"] = 1
 
+# --- フォーム（セッション優先） ---
 col1, col2, col3 = st.columns(3)
 with col1:
     inning = st.number_input(
@@ -114,7 +115,7 @@ with col1:
         min_value=1,
         step=1,
         value=st.session_state["inning"],
-        key="inning_input"
+        key="inning_display"
     )
 with col2:
     top_bottom = st.radio(
@@ -122,7 +123,7 @@ with col2:
         ["表", "裏"],
         horizontal=True,
         index=0 if st.session_state["top_bottom"] == "表" else 1,
-        key="tb_input"
+        key="tb_display"
     )
 with col3:
     order = st.number_input(
@@ -131,24 +132,27 @@ with col3:
         max_value=9,
         step=1,
         value=st.session_state["order"],
-        key="order_input"
+        key="order_display"
     )
 
-# --- フォーム変更時にセッション更新 ---
+# --- 表示後にセッションを更新（UI変更を即反映） ---
 st.session_state["inning"] = inning
 st.session_state["top_bottom"] = top_bottom
 st.session_state["order"] = order
 
+# --- 該当打席抽出 ---
 cond = (
-    (df["inning"].astype(str) == str(inning)) &
-    (df["top_bottom"] == top_bottom) &
-    (df["order"].astype(str) == str(order))
+    (df["inning"].astype(str) == str(st.session_state["inning"])) &
+    (df["top_bottom"] == st.session_state["top_bottom"]) &
+    (df["order"].astype(str) == str(st.session_state["order"]))
 )
 subset = df[cond]
 
 if len(subset) == 0:
     st.warning("指定条件に一致する球が見つかりません。")
     st.stop()
+
+subset = subset.reset_index()
 
 # ⚾ 並び順を固定
 subset = subset.reset_index()
@@ -308,9 +312,12 @@ with col_save:
                     (df["order"].astype(str) == str(next_order))
                 ]
                 if not df_next.empty:
-                    st.session_state.current_pitch_index = 0
+                    # ✅ 同じイニング・同表裏の次打者へ
+                    st.session_state["inning"] = current_inning
+                    st.session_state["top_bottom"] = current_tb
                     st.session_state["order"] = next_order
-                    st.success(f"→ 次打者（{next_order}番）へ移動します。")
+                    st.session_state.current_pitch_index = 0
+                    st.success(f"{current_inning}回{current_tb} {current_order}番の最後の球 → 次打者（{next_order}番）へ移動します。")
                     st.rerun()
                 else:
                     if top_bottom == "表":
