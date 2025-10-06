@@ -98,13 +98,46 @@ st.dataframe(df, use_container_width=True)
 
 # 2️⃣ 編集対象を指定
 st.header("2. 編集対象（イニング・打順で絞り込み）")
+
+# --- セッションで状態を保持 ---
+if "inning" not in st.session_state:
+    st.session_state["inning"] = 1
+if "top_bottom" not in st.session_state:
+    st.session_state["top_bottom"] = "表"
+if "order" not in st.session_state:
+    st.session_state["order"] = 1
+
 col1, col2, col3 = st.columns(3)
 with col1:
-    inning = st.number_input("イニング", min_value=1, step=1)
+    inning = st.number_input(
+        "イニング",
+        min_value=1,
+        step=1,
+        value=st.session_state["inning"],
+        key="inning_input"
+    )
 with col2:
-    top_bottom = st.radio("表裏", ["表", "裏"], horizontal=True)
+    top_bottom = st.radio(
+        "表裏",
+        ["表", "裏"],
+        horizontal=True,
+        index=0 if st.session_state["top_bottom"] == "表" else 1,
+        key="tb_input"
+    )
 with col3:
-    order = st.number_input("打順", min_value=1, max_value=9, step=1)
+    order = st.number_input(
+        "打順",
+        min_value=1,
+        max_value=9,
+        step=1,
+        value=st.session_state["order"],
+        key="order_input"
+    )
+
+# --- フォーム変更時にセッション更新 ---
+st.session_state["inning"] = inning
+st.session_state["top_bottom"] = top_bottom
+st.session_state["order"] = order
 
 cond = (
     (df["inning"].astype(str) == str(inning)) &
