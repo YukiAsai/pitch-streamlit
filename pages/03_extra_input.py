@@ -181,11 +181,23 @@ with colD:
 st.subheader("🏃‍♂️ ランナー情報")
 colE, colF, colG = st.columns(3)
 with colE:
-    runner_1b = st.checkbox("一塁走者あり", value=bool(st.session_state.atbat_info["runner_1b"]), key="runner_1b_input")
+    runner_1b = st.checkbox(
+        "一塁走者あり",
+        value=bool(st.session_state.atbat_info.get("runner_1b", False)),
+        key="runner_1b_input"
+    )
 with colF:
-    runner_2b = st.checkbox("二塁走者あり", value=bool(st.session_state.atbat_info["runner_2b"]), key="runner_2b_input")
+    runner_2b = st.checkbox(
+        "二塁走者あり",
+        value=bool(st.session_state.atbat_info.get("runner_2b", False)),
+        key="runner_2b_input"
+    )
 with colG:
-    runner_3b = st.checkbox("三塁走者あり", value=bool(st.session_state.atbat_info["runner_3b"]), key="runner_3b_input")
+    runner_3b = st.checkbox(
+        "三塁走者あり",
+        value=bool(st.session_state.atbat_info.get("runner_3b", False)),
+        key="runner_3b_input"
+    )
 
 # 🔹 変更があったらセッションに反映（同打席中は維持される）
 st.session_state.atbat_info.update({
