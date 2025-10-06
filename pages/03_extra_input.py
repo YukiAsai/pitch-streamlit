@@ -141,22 +141,28 @@ st.success(
 st.header("3. 補足情報入力（打席＋投球）")
 
 # --- 打席情報 ---
+# --- 打席情報 ---
 st.subheader("⚾ 打席情報")
 colA, colB, colC, colD = st.columns(4)
 with colA:
     batter = st.text_input("打者名", value=target_row.get("batter", st.session_state.atbat_info.get("batter", "")))
 with colB:
-    batter_side = st.selectbox(
-        "打者の利き腕", ["右", "左", "両"],
-        index=["右", "左", "両"].index(target_row.get("batter_side", st.session_state.atbat_info.get("batter_side", "右")))
-    )
+    # 安全なindex処理
+    _batter_side_val = target_row.get("batter_side", st.session_state.atbat_info.get("batter_side", "右"))
+    try:
+        batter_side_index = ["右", "左", "両"].index(_batter_side_val)
+    except ValueError:
+        batter_side_index = 0
+    batter_side = st.selectbox("打者の利き腕", ["右", "左", "両"], index=batter_side_index)
 with colC:
     pitcher = st.text_input("投手名", value=target_row.get("pitcher", st.session_state.atbat_info.get("pitcher", "")))
 with colD:
-    pitcher_side = st.selectbox(
-        "投手の利き腕", ["右", "左"],
-        index=["右", "左"].index(target_row.get("pitcher_side", st.session_state.atbat_info.get("pitcher_side", "右")))
-    )
+    _pitcher_side_val = target_row.get("pitcher_side", st.session_state.atbat_info.get("pitcher_side", "右"))
+    try:
+        pitcher_side_index = ["右", "左"].index(_pitcher_side_val)
+    except ValueError:
+        pitcher_side_index = 0
+    pitcher_side = st.selectbox("投手の利き腕", ["右", "左"], index=pitcher_side_index)
 
 # --- ランナー情報（有無チェック） ---
 st.subheader("🏃‍♂️ ランナー情報")
