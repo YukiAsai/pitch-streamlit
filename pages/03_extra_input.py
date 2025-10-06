@@ -127,28 +127,32 @@ st.header("3. 補足情報入力（打席＋投球）")
 # --- 打席情報 ---
 st.subheader("⚾ 打席情報")
 colA, colB, colC, colD = st.columns(4)
-
-# 現在の打席情報を初期値として設定
-atbat = st.session_state.atbat_info.get((inning, top_bottom, order), {})
-
 with colA:
-    batter = st.text_input("打者名", value=atbat.get("batter", target_row.get("batter", "")))
+    batter = st.text_input("打者名", value=target_row.get("batter", ""))
 with colB:
-    batter_side = st.selectbox("打者の利き腕", ["右", "左", "両"],
-                               index=["右", "左", "両"].index(atbat.get("batter_side", target_row.get("batter_side", "右"))) if atbat.get("batter_side", target_row.get("batter_side")) in ["右", "左", "両"] else 0)
+    batter_side = st.selectbox(
+        "打者の利き腕", ["右", "左", "両"],
+        index=["右","左","両"].index(target_row.get("batter_side", "右"))
+        if target_row.get("batter_side") in ["右","左","両"] else 0
+    )
 with colC:
-    pitcher = st.text_input("投手名", value=atbat.get("pitcher", target_row.get("pitcher", "")))
+    pitcher = st.text_input("投手名", value=target_row.get("pitcher", ""))
 with colD:
-    pitcher_side = st.selectbox("投手の利き腕", ["右", "左"],
-                                index=["右", "左"].index(atbat.get("pitcher_side", target_row.get("pitcher_side", "右"))) if atbat.get("pitcher_side", target_row.get("pitcher_side")) in ["右", "左"] else 0)
+    pitcher_side = st.selectbox(
+        "投手の利き腕", ["右", "左"],
+        index=["右","左"].index(target_row.get("pitcher_side", "右"))
+        if target_row.get("pitcher_side") in ["右","左"] else 0
+    )
 
+# --- ランナー情報（有無チェック） ---
+st.subheader("🏃‍♂️ ランナー情報")
 colE, colF, colG = st.columns(3)
 with colE:
-    runner_1b = st.text_input("一塁走者", value=atbat.get("runner_1b", target_row.get("runner_1b", "")))
+    runner_1b = st.checkbox("一塁走者あり", value=(target_row.get("runner_1b") in ["有", True, "True"]))
 with colF:
-    runner_2b = st.text_input("二塁走者", value=atbat.get("runner_2b", target_row.get("runner_2b", "")))
+    runner_2b = st.checkbox("二塁走者あり", value=(target_row.get("runner_2b") in ["有", True, "True"]))
 with colG:
-    runner_3b = st.text_input("三塁走者", value=atbat.get("runner_3b", target_row.get("runner_3b", "")))
+    runner_3b = st.checkbox("三塁走者あり", value=(target_row.get("runner_3b") in ["有", True, "True"]))
 
 # --- 投球情報 ---
 st.subheader("🎯 投球情報")
