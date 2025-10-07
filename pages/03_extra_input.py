@@ -71,7 +71,7 @@ def batch_update_rows(sheet_name: str, row_indices_0based: list[int], updates_li
         requests.append({"range": rng, "values": [row_vals]})
 
     # batch_update
-    ws.batch_update(requests, value_input_option="RAW")
+    ws.batch_update(requests, value_input_option="USER_ENTERED")
 
 
 # =========================
