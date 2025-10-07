@@ -202,9 +202,11 @@ if df.empty:
 # 必要カラムの確保（不足していても落ちないように）
 ensure_columns(df, [
     "batter","batter_side","pitcher","pitcher_side",
-    "runner_1b","runner_2b","runner_3b","outs",
+    "runner_1b","runner_2b","runner_3b",
+    "out_count",   
     "pitch_result","atbat_result","batted_type","batted_position","batted_outcome",
-    "strike_count","ball_count"
+    "strike_count","ball_count",
+    "pitch_in_bat_at"                 # ← これも追加
 ])
 
 st.caption(f"総行数: {len(df)}")
@@ -274,7 +276,7 @@ if not st.session_state.atbat_buffer:
     r1 = bool(first.get("runner_1b")) if str(first.get("runner_1b")).lower() not in ("", "0", "false", "none") else False
     r2 = bool(first.get("runner_2b")) if str(first.get("runner_2b")).lower() not in ("", "0", "false", "none") else False
     r3 = bool(first.get("runner_3b")) if str(first.get("runner_3b")).lower() not in ("", "0", "false", "none") else False
-    outs = int(first.get("outs") or 0)
+    out_count = int(first.get("out_count") or 0)
 
     st.session_state.atbat_buffer = {
         "batter": batter,
@@ -284,7 +286,7 @@ if not st.session_state.atbat_buffer:
         "runner_1b": r1,
         "runner_2b": r2,
         "runner_3b": r3,
-        "outs": outs
+        "out_count": out_count
     }
 
 # ---- 入力UI（横並び） ----
@@ -308,7 +310,7 @@ with r2c:
 with r3c:
     st.session_state.atbat_buffer["runner_3b"] = st.checkbox("三塁走者あり", value=st.session_state.atbat_buffer["runner_3b"])
 with oc:
-    st.session_state.atbat_buffer["outs"] = st.number_input("アウトカウント", min_value=0, max_value=2, step=1, value=int(st.session_state.atbat_buffer["outs"]))
+    st.session_state.atbat_buffer["out_count"] = st.number_input("アウトカウント", min_value=0, max_value=2, step=1, value=int(st.session_state.atbat_buffer["out_count"]))
 
 st.caption("※ この打席が続く限りこの値が初期値として使われます。次打席へ進むと更新できます。")
 
@@ -395,6 +397,9 @@ else:
     batted_type = ""
     batted_position = ""
     batted_outcome = ""
+    
+# この打席での「何球目」(1-based)
+pitch_in_bat_at = st.session_state.pitch_idx + 1
 
 # ローカル編集に反映（保存ボタンを押すまでは Sheets 書き込みしない）
 local_update = {
@@ -413,7 +418,8 @@ local_update = {
     "runner_1b": st.session_state.atbat_buffer["runner_1b"],
     "runner_2b": st.session_state.atbat_buffer["runner_2b"],
     "runner_3b": st.session_state.atbat_buffer["runner_3b"],
-    "outs": st.session_state.atbat_buffer["outs"],
+    "out_count": st.session_state.atbat_buffer["out_count"],
+    "pitch_in_bat_at": pitch_in_bat_at,
 }
 st.session_state.pitch_edits[df_row] = local_update  # 逐次上書き（軽量）
 
@@ -435,7 +441,7 @@ with col_save:
         # 空 dict は現状の DF から “最低限の列” を拾って補う（未編集でも strike/ball などは保存）
         minimal_cols = ["pitch_result","atbat_result","batted_type","batted_position","batted_outcome",
                         "strike_count","ball_count",
-                        "batter","batter_side","pitcher","pitcher_side","runner_1b","runner_2b","runner_3b","outs"]
+                        "batter","batter_side","pitcher","pitcher_side","runner_1b","runner_2b","runner_3b","out_count","pitch_in_bat_at"]
         for i, up in enumerate(updates_list):
             if not up:
                 base_row = df.loc[target_df_idxs[i]]
@@ -524,7 +530,7 @@ with col_next:
                     "runner_1b": bool(next_first.get("runner_1b")),
                     "runner_2b": bool(next_first.get("runner_2b")),
                     "runner_3b": bool(next_first.get("runner_3b")),
-                    "outs": int(next_first.get("outs") or 0)
+                    "out_count": int(next_first.get("out_count") or 0)
                 }
 
                 st.session_state.pitch_edits = {}
@@ -535,7 +541,7 @@ with col_next:
 # 6) 参考：この打席の全球（プレビュー）
 # =========================
 st.header("6. この打席の全球（プレビュー）")
-preview_cols = ["inning","top_bottom","order","zone","pitch_type","pitch_result","strike_count","ball_count","atbat_result"]
+preview_cols = ["inning","top_bottom","order","zone","pitch_type","pitch_result","strike_count","ball_count","out_count","atbat_result","pitch_in_bat_at"]
 for c in preview_cols:
     if c not in subset.columns:
         subset[c] = ""
