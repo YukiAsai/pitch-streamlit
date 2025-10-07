@@ -312,6 +312,30 @@ with oc:
 
 st.caption("※ この打席が続く限りこの値が初期値として使われます。次打席へ進むと更新できます。")
 
+# 🔹 打席確定ボタン
+if "atbat_confirmed" not in st.session_state:
+    st.session_state.atbat_confirmed = False
+
+col_conf, col_reset = st.columns([2,1])
+with col_conf:
+    if st.button("✅ この打席を確定（投球入力へ進む）", type="primary", use_container_width=True):
+        st.session_state.atbat_confirmed = True
+        st.session_state.pitch_idx = 0
+        st.session_state.pitch_edits = {}
+        st.rerun()
+
+with col_reset:
+    if st.button("🔄 打席情報を再編集", use_container_width=True):
+        st.session_state.atbat_confirmed = False
+        st.session_state.pitch_edits = {}
+        st.session_state.pitch_idx = 0
+        st.rerun()
+
+# --- まだ打席確定されていない場合 ---
+if not st.session_state.atbat_confirmed:
+    st.info("👆 打席情報を確認し、「この打席を確定」ボタンを押すと投球入力画面が表示されます。")
+    st.stop()
+
 # =========================
 # 4) 何球目を編集するか
 # =========================
