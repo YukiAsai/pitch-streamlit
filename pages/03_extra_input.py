@@ -113,31 +113,35 @@ def next_atbat_pointer(df: pd.DataFrame, inning: int, tb: str, order: int) -> tu
       2) 表→裏、もしくは 裏→次イニング表 の 1番が存在
       見つからなければ (None, None, None)
     """
+    # orderカラムを一度すべて整数化（float, str 混在対応）
+    df = df.copy()
+    df["order_int"] = pd.to_numeric(df["order"], errors="coerce").fillna(0).astype(int)
+    inning = int(inning)
+    order = int(order)
+
     next_order = 1 if order == 9 else order + 1
-    # 1) 同じ TB で次打者
-    same_tb = df[
-        (df["inning"].astype(str) == str(inning)) &
-        (df["top_bottom"] == tb) &
-        (df["order"].astype(str) == str(next_order))
-    ]
+
+    # 1) 同じイニング・同じ表裏で次打者を探す
+    same_tb = df[(df["inning"].astype(int) == inning) &
+                 (df["top_bottom"] == tb) &
+                 (df["order_int"] == next_order)]
     if not same_tb.empty:
         return (inning, tb, next_order)
 
-    # 2) TB 進行
+    # 2) 表裏を進める
     if tb == "表":
         ntb, ninn = "裏", inning
     else:
         ntb, ninn = "表", inning + 1
 
-    next_tb_first = df[
-        (df["inning"].astype(str) == str(ninn)) &
-        (df["top_bottom"] == ntb) &
-        (df["order"].astype(str) == "1")
-    ]
+    next_tb_first = df[(df["inning"].astype(int) == ninn) &
+                       (df["top_bottom"] == ntb) &
+                       (df["order_int"] == 1)]
     if not next_tb_first.empty:
         return (ninn, ntb, 1)
 
-    return (None, None, None)  # 試合終了
+    # 3) どちらも存在しない場合は試合終了
+    return (None, None, None)
 
 
 # =========================
@@ -423,56 +427,64 @@ with col_save:
             st.error(f"保存に失敗しました：{e}")
 
 with col_next:
-    # 打席終了しているか（その打席の最後の球の pitch_result で判定）
     last_df_idx = int(subset.iloc[-1]["index"])
     last_result = st.session_state.pitch_edits.get(last_df_idx, {}).get("pitch_result")
     if not last_result:
         last_result = str(df.loc[last_df_idx].get("pitch_result") or "")
 
-    disabled_msg = "（打席終了の球が入力されていません）"
     can_go_next = last_result == "打席終了"
 
-    if st.button(f"➡ 次の打席へ進む{'' if can_go_next else disabled_msg}", use_container_width=True, disabled=(not can_go_next)):
-        # 次打席ポインタの算出
-        ninn, ntb, nord = next_atbat_pointer(df, st.session_state.inning, st.session_state.top_bottom, st.session_state.order)
+    if st.button(f"➡ 次の打席へ進む{'（打席終了の球が必要）' if not can_go_next else ''}",
+                 use_container_width=True, disabled=not can_go_next):
+        ninn, ntb, nord = next_atbat_pointer(df, st.session_state.inning,
+                                             st.session_state.top_bottom, st.session_state.order)
         if ninn is None:
             st.info("試合終了です 🏁")
         else:
-            # イニングまたぎの場合は “投手情報のみ引き継ぐ”（同一 TB のとき）
             carry_pitcher = (ntb == st.session_state.top_bottom)
 
-            # ポインタ更新
             st.session_state.inning = ninn
             st.session_state.top_bottom = ntb
             st.session_state.order = nord
-            st.session_state.pitch_idx = 0  # 新しい打席は 1球目から
+            st.session_state.pitch_idx = 0
 
-            # atbat_buffer をリセットしつつ、必要に応じて投手を引き継ぎ
-            next_first = atbat_subset(df, ninn, ntb, nord).reset_index().iloc[0]
-            new_batter = st.session_state.batter_memory.get((st.session_state.sheet_name, ntb, nord), {}).get("batter", next_first.get("batter",""))
-            new_batter_side = st.session_state.batter_memory.get((st.session_state.sheet_name, ntb, nord), {}).get("batter_side", next_first.get("batter_side","右") or "右")
-
-            if carry_pitcher:
-                new_pitcher = st.session_state.atbat_buffer["pitcher"]
-                new_pitcher_side = st.session_state.atbat_buffer["pitcher_side"]
+            # 新しい打席を特定
+            next_subset = atbat_subset(df, ninn, ntb, nord)
+            if next_subset.empty:
+                st.info("次の打席データがスプレッドシートに存在しません。")
             else:
-                new_pitcher = st.session_state.pitcher_memory.get((st.session_state.sheet_name, ntb), {}).get("pitcher", next_first.get("pitcher",""))
-                new_pitcher_side = st.session_state.pitcher_memory.get((st.session_state.sheet_name, ntb), {}).get("pitcher_side", next_first.get("pitcher_side","右") or "右")
+                next_first = next_subset.reset_index().iloc[0]
+                new_batter = st.session_state.batter_memory.get(
+                    (st.session_state.sheet_name, ntb, nord), {}
+                ).get("batter", next_first.get("batter", ""))
+                new_batter_side = st.session_state.batter_memory.get(
+                    (st.session_state.sheet_name, ntb, nord), {}
+                ).get("batter_side", next_first.get("batter_side", "右") or "右")
 
-            st.session_state.atbat_buffer = {
-                "batter": new_batter,
-                "batter_side": new_batter_side,
-                "pitcher": new_pitcher,
-                "pitcher_side": new_pitcher_side,
-                # 走者・アウトは新打席なので初期化（DFにあれば拾う）
-                "runner_1b": bool(next_first.get("runner_1b")) if str(next_first.get("runner_1b")).lower() not in ("", "0", "false", "none") else False,
-                "runner_2b": bool(next_first.get("runner_2b")) if str(next_first.get("runner_2b")).lower() not in ("", "0", "false", "none") else False,
-                "runner_3b": bool(next_first.get("runner_3b")) if str(next_first.get("runner_3b")).lower() not in ("", "0", "false", "none") else False,
-                "outs": int(next_first.get("outs") or 0)
-            }
+                if carry_pitcher:
+                    new_pitcher = st.session_state.atbat_buffer["pitcher"]
+                    new_pitcher_side = st.session_state.atbat_buffer["pitcher_side"]
+                else:
+                    new_pitcher = st.session_state.pitcher_memory.get(
+                        (st.session_state.sheet_name, ntb), {}
+                    ).get("pitcher", next_first.get("pitcher", ""))
+                    new_pitcher_side = st.session_state.pitcher_memory.get(
+                        (st.session_state.sheet_name, ntb), {}
+                    ).get("pitcher_side", next_first.get("pitcher_side", "右") or "右")
 
-            # 現打席で作っていた一時編集は次打席に持ち越さない
-            st.session_state.pitch_edits = {}
+                st.session_state.atbat_buffer = {
+                    "batter": new_batter,
+                    "batter_side": new_batter_side,
+                    "pitcher": new_pitcher,
+                    "pitcher_side": new_pitcher_side,
+                    "runner_1b": bool(next_first.get("runner_1b")),
+                    "runner_2b": bool(next_first.get("runner_2b")),
+                    "runner_3b": bool(next_first.get("runner_3b")),
+                    "outs": int(next_first.get("outs") or 0)
+                }
+
+                st.session_state.pitch_edits = {}
+                st.success(f"{ninn}回{ntb} {nord}番打者へ移動しました。")
 
 # =========================
 # 6) 参考：この打席の全球（プレビュー）
