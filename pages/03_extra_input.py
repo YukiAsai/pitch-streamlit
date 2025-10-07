@@ -209,6 +209,14 @@ ensure_columns(df, [
 
 st.caption(f"総行数: {len(df)}")
 
+# 🔹 次打席への自動入力リクエストがある場合、それをUIに反映
+if "auto_inning_input" in st.session_state:
+    st.session_state["inning_input"] = st.session_state.pop("auto_inning_input")
+if "auto_tb_input" in st.session_state:
+    st.session_state["tb_input"] = st.session_state.pop("auto_tb_input")
+if "auto_order_input" in st.session_state:
+    st.session_state["order_input"] = st.session_state.pop("auto_order_input")
+
 # =========================
 # 2) 対象“打席”を指定
 # =========================
@@ -450,9 +458,9 @@ with col_next:
             st.session_state.pitch_idx = 0
 
             # ✅ 対象打席入力欄のUIも更新
-            st.session_state.inning_input = ninn
-            st.session_state.tb_input = ntb
-            st.session_state.order_input = nord
+            st.session_state["auto_inning_input"] = ninn
+            st.session_state["auto_tb_input"] = ntb
+            st.session_state["auto_order_input"] = nord
 
             # 新しい打席を特定
             next_subset = atbat_subset(df, ninn, ntb, nord)
