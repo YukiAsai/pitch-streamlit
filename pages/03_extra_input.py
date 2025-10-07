@@ -443,10 +443,16 @@ with col_next:
         else:
             carry_pitcher = (ntb == st.session_state.top_bottom)
 
+            # 🔹 次打者の情報をセッション・UI両方に反映
             st.session_state.inning = ninn
             st.session_state.top_bottom = ntb
             st.session_state.order = nord
             st.session_state.pitch_idx = 0
+
+            # ✅ 対象打席入力欄のUIも更新
+            st.session_state.inning_input = ninn
+            st.session_state.tb_input = ntb
+            st.session_state.order_input = nord
 
             # 新しい打席を特定
             next_subset = atbat_subset(df, ninn, ntb, nord)
@@ -484,6 +490,7 @@ with col_next:
                 }
 
                 st.session_state.pitch_edits = {}
+
                 st.success(f"{ninn}回{ntb} {nord}番打者へ移動しました。")
 
 # =========================
