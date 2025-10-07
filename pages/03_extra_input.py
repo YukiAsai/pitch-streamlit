@@ -220,19 +220,25 @@ if "auto_order_input" in st.session_state:
 # =========================
 # 2) 対象“打席”を指定
 # =========================
-st.header("2. 対象打席を指定（イニング / 表裏 / 打順）")
-c1, c2, c3 = st.columns([1,1,1])
-with c1:
-    inning = st.number_input("イニング", min_value=1, step=1, value=int(st.session_state.inning), key="inning_input")
-with c2:
-    top_bottom = st.radio("表裏", ["表","裏"], horizontal=True, index=(0 if st.session_state.top_bottom=="表" else 1), key="tb_input")
-with c3:
-    order = st.number_input("打順", min_value=1, max_value=9, step=1, value=int(st.session_state.order), key="order_input")
+st.header("2. 対象打席を指定（イニング・表裏・打順）")
 
-# セッションに確定
-st.session_state.inning = int(st.session_state.inning_input)
-st.session_state.top_bottom = st.session_state.tb_input
-st.session_state.order = int(st.session_state.order_input)
+# --- 現在の状態を使って初期値を決定 ---
+current_inning = st.session_state.get("auto_inning_input", st.session_state.get("inning", 1))
+current_tb = st.session_state.get("auto_tb_input", st.session_state.get("top_bottom", "表"))
+current_order = st.session_state.get("auto_order_input", st.session_state.get("order", 1))
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    inning = st.number_input("イニング", min_value=1, step=1, value=current_inning)
+with col2:
+    top_bottom = st.radio("表裏", ["表", "裏"], horizontal=True, index=(0 if current_tb=="表" else 1))
+with col3:
+    order = st.number_input("打順", min_value=1, max_value=9, step=1, value=current_order)
+
+# --- 最新の状態をセッションに保持 ---
+st.session_state.inning = inning
+st.session_state.top_bottom = top_bottom
+st.session_state.order = order
 
 # 打席の行群
 subset = atbat_subset(df, st.session_state.inning, st.session_state.top_bottom, st.session_state.order)
